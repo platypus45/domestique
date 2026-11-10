@@ -900,36 +900,29 @@ def _deescalated_load(old_duration_min, new_type: str,
 
 # v4.6.6 IMPL-B INJURY-GATES helpers — signatures locked in MASTER_DECISIONS §4.
 
-def _hooper_index_today() -> int:
-    """G6 input — Hooper composite (sleep+fatigue+stress+soreness, 1-7 each).
-    Hooper & Mackinnon 1995 — index >=18 = significant accumulated fatigue.
-    Returns 0 when daily_log is missing/incomplete (safe default).
+def _hooper_index_today(daily_log_today=None, hooper_history=None,
+                        day: "date | None" = None) -> dict | None:
+    """G6 input: the band of today's morning check-in, or None without one.
 
-    v4.6.6 WAVE-4-FIX: polarity matches db.py:583 + dashboard form (1=best,
-    7=worst for ALL fields including sleep_quality). Direct sum, no inversion.
-    Previously inverted sleep_quality via `8 - sleep_q`, producing hooper=12
-    for the "well-slept but stressed" tuple (sleep=7,fat=3,str=4,sor=4) when
-    UI/db both compute 18 → planner missed the gate. Single source of truth.
+    3.14.0: what a check-in means is decided by its one owner,
+    readiness_composite.hooper_band (the rider's own normal once 14 check-ins
+    exist, fixed limits on the form's neutral until then); this only hands it
+    the row. A complete ``daily_log_today`` dict is used as given; anything
+    else reads today's row from the database. Polarity is the form's and the
+    database's (1 = best, 7 = worst for all four questions, sleep included):
+    the v4.6.6 `8 - sleep_quality` inversion must never come back.
     """
+    row = None
+    if isinstance(daily_log_today, dict) and all(
+            daily_log_today.get(k) is not None
+            for k in ("sleep_quality", "fatigue", "stress", "soreness")):
+        row = daily_log_today
     try:
-        import db as _db
-        log_row = _db.get_daily_log_today()
-    except Exception:  # noqa: BLE001
-        return 0
-    if not log_row:
-        return 0
-    # Prefer the persisted hooper_index column (canonical, written by
-    # db.upsert_daily_log) — single source of truth across UI/db/planner.
-    persisted = log_row.get("hooper_index")
-    if isinstance(persisted, int) and 4 <= persisted <= 28:
-        return persisted
-    sleep_q = log_row.get("sleep_quality")
-    fatigue = log_row.get("fatigue")
-    stress = log_row.get("stress")
-    soreness = log_row.get("soreness")
-    if None in (sleep_q, fatigue, stress, soreness):
-        return 0
-    return int(sleep_q) + int(fatigue) + int(stress) + int(soreness)
+        import readiness_composite as _rc
+        return _rc.hooper_band((day or clock.today()).isoformat(),
+                               today_row=row, history=hooper_history)
+    except Exception:  # noqa: BLE001 — no band is no cap, never a crash
+        return None
 
 
 def _last_48h_z5plus_min(rides: list[dict]) -> float:
@@ -16121,12 +16114,15 @@ def adjust_today_session(
     yesterday_tss_ratio: float = 1.0,
     rides_recent: list[dict] | None = None,
     daily_log_today: dict | None = None,
+    hooper_history: list[dict] | None = None,
 ) -> tuple[PlannedSession, str]:
     """Adjust today's session based on HRV / readiness / injury-prevention gates.
 
     v4.6.6 IMPL-B INJURY-GATES (priority; first match wins):
       G5  daily_log.soreness >= 6 -> recovery (Hooper 1995 + Cheung 2003)
-      G6  Hooper composite >= 18  -> Z2 cap (Hooper & Mackinnon 1995)
+      G6  morning check-in band "rest" -> Z2 cap (3.14.0: band from
+          readiness_composite.hooper_band; ``hooper_history`` is its
+          baseline window for unit tests, None reads the database)
       G2  rolling 48h Z5+ >= 25min -> Z2 cap (Hulin 2014); cycling included
       G1  yesterday_tss_ratio > 1.5 -> Z2 (Foster 1998)
       G7  3-day mean RPE >= 7 + HIT today -> drop one tier (Foster 1998)
@@ -16187,41 +16183,24 @@ def adjust_today_session(
                 adapted=True,
             ), f"G5 soreness {sv}/7 → forced recovery (peripheral fatigue bypass)"
 
-    # G6: Hooper composite >= 18 (Hooper & Mackinnon 1995)
-    # v4.6.6 WAVE-4-FIX: direct sum (matches db.py:583 + dashboard form
-    # polarity 1=best/7=worst for ALL fields). Prefers the persisted
-    # hooper_index column when present (canonical single source of truth).
-    if isinstance(daily_log_today, dict):
-        persisted = daily_log_today.get("hooper_index")
-        if isinstance(persisted, int) and 4 <= persisted <= 28:
-            hooper = persisted
-        elif all(daily_log_today.get(k) is not None for k in
-                 ("sleep_quality", "fatigue", "stress", "soreness")):
-            hooper = (
-                int(daily_log_today["sleep_quality"])
-                + int(daily_log_today["fatigue"])
-                + int(daily_log_today["stress"])
-                + int(daily_log_today["soreness"])
-            )
-        else:
-            hooper = _hooper_index_today()
-    else:
-        hooper = _hooper_index_today()
-    if hooper >= 18 and planned.session_type in (
+    # G6: the morning check-in band is "rest" → Z2 cap. 3.14.0: the band
+    # replaces the fixed "Hooper >= 18", which had no traceable source and
+    # read an ordinary morning plus one answer a notch worse as a cap.
+    g6 = _hooper_index_today(daily_log_today, hooper_history, planned.day)
+    if g6 is not None and g6.get("band") == "rest" and planned.session_type in (
         "vo2max", "threshold", "overunder", "sweetspot", "sprint", "tempo",
         "long_z2", "ftp_test",
     ):
-        log.info(f"EVENT=injury_gate_g6 hooper={hooper} session={planned.session_type} → z2")
+        log.info(f"EVENT=injury_gate_g6 hooper={g6['index']} compared={g6['compared']} "
+                 f"mode={g6['mode']} session={planned.session_type} → z2")
+        _vs = "your usual" if g6.get("mode") == "personal" else "normal"
         return PlannedSession(
             day=planned.day, day_name=planned.day_name,
             session_type="z2", duration_min=planned.duration_min,
             tss_estimate=round(planned.duration_min / 60 * TSS_PER_HOUR["z2"]),
-            description=(
-                f"Z2 — Hooper index {hooper}/28 (≥18 accumulated wellness "
-                f"deficit, Hooper & Mackinnon 1995)."
-            ),
+            description=f"Z2 — your morning check-in is well below {_vs} today.",
             adapted=True,
-        ), f"G6 Hooper {hooper} ≥18 → Z2 cap"
+        ), f"Your morning check-in is well below {_vs} — easing today to Z2"
 
     # G2: 48h Z5+ ceiling >= 25min (Hulin 2014) — cycling INCLUDED in v4.6.6
     z5plus_48h = _last_48h_z5plus_min(rides_recent)

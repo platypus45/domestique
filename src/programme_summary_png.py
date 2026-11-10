@@ -18,7 +18,7 @@ References (cited inline + in commit):
   improvement bar).
 - Foster 1998 (Med Sci Sports Exerc 30:1164) — monotony target <2.0.
 - Treff et al. 2019 (Front Physiol) — polarization index >2.0 = polarized.
-- Hooper & Mackinnon 1995 — wellness composite.
+- Hooper et al. 1995 (Med Sci Sports Exerc 27:106-112) — well-being sum.
 - Coggan/Allen TR&P 3rd ed. — eFTP / CTL / TSS.
 """
 from __future__ import annotations
@@ -265,11 +265,14 @@ def _draw_hooper(draw, x, y, w, h, trend):
         draw.line(pts, fill=ACCENT2, width=2)
     for px, py in pts:
         draw.ellipse((px - 2, py - 2, px + 2, py + 2), fill=ACCENT2)
-    # Threshold line at 18 (G6 cap)
-    thresh_y = cy + ch - ((18 - vmin) / rng) * ch
+    # The fixed rest limit (3.14.0): it applies until a rider has 14 recent
+    # check-ins, after which the band compares with their own normal, so the
+    # line is labelled as the fixed limit rather than as "the cap".
+    from readiness_composite import HOOPER_FIXED_REST
+    thresh_y = cy + ch - ((HOOPER_FIXED_REST - vmin) / rng) * ch
     for dx in range(0, int(cw), 8):
         draw.line([(cx + dx, thresh_y), (cx + dx + 4, thresh_y)], fill=RED, width=1)
-    draw.text((cx + cw - 4, thresh_y - 12), "Hooper=18 (cap)",
+    draw.text((cx + cw - 4, thresh_y - 12), f"fixed limit {HOOPER_FIXED_REST}",
               font=_font(9), fill=RED, anchor="ra")
 
 

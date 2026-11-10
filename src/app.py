@@ -1030,20 +1030,30 @@ def setup_test_icu(body: dict):
         data = resp.json()
         # Try to get eFTP from wellness
         eftp = None
-        weight = data.get("weight")
+        weight = None
         try:
-            w_url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness?oldest=2025-01-01&newest=2026-12-31"
+            # 3.14.0 (grill L6): a rolling year; the fixed 2025-2026 dates
+            # stopped seeing new days on 1 January 2027.
+            _today = clock.today()
+            w_url = (f"https://intervals.icu/api/v1/athlete/{athlete_id}/wellness"
+                     f"?oldest={(_today - timedelta(days=365)).isoformat()}"
+                     f"&newest={_today.isoformat()}")
             w_resp = httpx.get(w_url, auth=("API_KEY", api_key), timeout=10, verify=_icu_verify())
             if w_resp.status_code == 200:
-                for w in reversed(w_resp.json()):
+                records = w_resp.json()
+                # 3.14.0 (grill M5): the one "intervals.icu weight", the rule
+                # the follow mirror uses: newest scale reading of 30 days.
+                _w = db.icu_weight_from_records(records)
+                weight = _w[1] if _w else None
+                for w in reversed(records):
                     si = w.get("sportInfo", [])
                     if si and si[0].get("eftp"):
                         eftp = round(si[0]["eftp"])
                         break
-                    if not weight and w.get("weight"):
-                        weight = w["weight"]
         except Exception:
             pass
+        if weight is None:
+            weight = data.get("weight")   # else the athlete setting
         return {
             "ok": True,
             "name": data.get("name", ""),
@@ -3887,14 +3897,34 @@ def api_readiness(subjective: float = Query(None)):
     severity = source = None
     severity_reasons: list = []
     try:
-        from datetime import date as _date_cls
         from readiness_composite import compute_training_severity as _cts
-        sev = _cts("default", _date_cls.today().isoformat()) or {}
+        # The one clock (3.14.0, grill L5): the band reads the rider's own
+        # check-in history, so it must judge the same day every reader does.
+        sev = _cts("default", clock.today().isoformat()) or {}
         if isinstance(sev, dict):
             severity = sev.get("severity")
             source = sev.get("source")
             severity_reasons = sev.get("reasons") or []
     except Exception:
+        pass
+    # 3.14.0 F1: was today's check-in imported from intervals.icu (the pill
+    # names it), and did the rider log an injury there today (grill M3: the
+    # verdict never reads "Ready to train" without a plain line about it).
+    checkin_imported = False
+    injury_note = None
+    try:
+        _today_log = db.get_daily_log_today() or {}
+        checkin_imported = bool(_today_log.get("icu_fields"))
+        _injury = _icu_extras(_icu_wellness_today()).get("injury")
+        if _injury in ("Poor", "Injured") and "soreness" in str(
+                _today_log.get("icu_fields") or "").split(","):
+            injury_note = (f"You logged an injury in intervals.icu today ({_injury}). "
+                           "It counts as sore legs, so today's session becomes "
+                           "a recovery ride.")
+        elif _injury in ("Niggle", "Poor", "Injured"):
+            injury_note = (f"You logged an injury in intervals.icu today ({_injury}). "
+                           "Your plan is not changed for it; ease off if it hurts.")
+    except Exception:  # noqa: BLE001 — the verdict renders without the line
         pass
     return {
         "readiness": r,
@@ -3905,6 +3935,8 @@ def api_readiness(subjective: float = Query(None)):
         "severity": severity,
         "source": source,
         "severity_reasons": severity_reasons,
+        "checkin_imported": checkin_imported,
+        "injury_note": injury_note,
         "training": merged_load,
         "sleep": {
             "sleep_h": sleep.get("sleep_h"), "sleep_score": sleep.get("sleep_score"),
@@ -7758,7 +7790,10 @@ def api_oauth_icu_callback(code: str = Query(""), state: str = Query(""),
                       "— purging the profile's synced data",
                       target_pid, prev_athlete, athlete_id)
             try:
-                db.purge_profile_data(target_pid)
+                # 3.14.0 (grill M6): another athlete's account — a weight that
+                # followed the old one stays, becomes the rider's, and asks to
+                # be checked.
+                db.purge_profile_data(target_pid, athlete_changed=True)
             except db.SyncBusy:
                 # Nothing saved yet — a clean retry re-runs the whole flow.
                 _log.warning("EVENT=icu_oauth_purge_busy profile=%s", target_pid)
@@ -8570,9 +8605,22 @@ def api_settings():
     p_zones = _power_zones(pm.ftp)
     h_zones = _hr_zones(pm.lthr, pm.max_hr, pm=pm)
     _hz_model, _hz_anchor, _hz_why = _hr_zone_model(pm)
+    # 3.14.0 W2: the newest intervals.icu weight, shown next to the tick.
+    try:
+        _icu_w = db.icu_weight_recent()
+    except Exception:  # noqa: BLE001 — no store yet
+        _icu_w = None
 
     return {
         "weight": config.ATHLETE_WEIGHT_KG,
+        # 3.14.0 W2: whose weight this is. Follows intervals.icu only when the
+        # rider ticked "Use my intervals.icu weight"; any other source (or
+        # none, every profile from before 3.14.0) is the rider's own.
+        "weight_source": pm._athlete.get("weight_source"),
+        "weight_follow_icu": pm._athlete.get("weight_source") == "icu",
+        "weight_needs_check": bool(pm._athlete.get("weight_needs_check")),
+        "weight_icu_latest": ({"date": _icu_w[0], "value": _icu_w[1]}
+                              if _icu_w else None),
         "lbm": config.ATHLETE_LBM_KG,
         "ftp": config.ATHLETE_FTP_W,
         "eftp": eftp,
@@ -8688,6 +8736,15 @@ def update_settings(request_body: dict):
             # v3.6.0-fix28 M-3: allow athlete-only keys (no config mirror).
             if config_key is not None:
                 updates[config_key] = val
+
+    # 3.14.0 W2: "Use my intervals.icu weight". Ticked (true), the weight comes
+    # from intervals.icu, so a weight in the same body is not the rider's
+    # typing and is dropped; unticked (false), the weight is the rider's
+    # again. A typed weight is stamped "manual" in save_athlete (grill M4).
+    weight_follow = request_body.get("weight_follow_icu")
+    if weight_follow is True:
+        athlete_updates.pop("weight_kg", None)
+        updates.pop("ATHLETE_WEIGHT_KG", None)
 
     # W2d provenance: a settings-form LTHR write is MANUAL — it blocks the ICU
     # mirror (W3) from clobbering a tested value, and the UI shows source+date.
@@ -8820,6 +8877,23 @@ def update_settings(request_body: dict):
         clear_cache()
         # Auto-log metrics to history
         db.log_metrics_from_settings(updates)
+
+    # 3.14.0 W2: the tick goes through the one hand-back writer (grill H3: the
+    # fact table refuses intervals.icu over a typed weight, so the box never
+    # worked for a rider who had saved a weight). The newest intervals.icu
+    # weight lands at once; without a recent one the number stays until the
+    # next reading. Unticking keeps the number and makes it the rider's.
+    if weight_follow is True and pm._athlete.get("weight_source") != "icu":
+        try:
+            _newest = db.icu_weight_recent()
+        except Exception:  # noqa: BLE001 — no store yet: source moves only
+            _newest = None
+        pm.release_fact("weight", "icu", _newest[1] if _newest else None)
+        clear_cache()
+    elif (weight_follow is False and "weight_kg" not in athlete_updates
+            and pm._athlete.get("weight_source") == "icu"):
+        pm._set_fact("weight", pm.weight_kg, "manual")
+        clear_cache()
 
     return {"ok": True, "updated": updates, "settings": api_settings()}
 
@@ -9043,12 +9117,81 @@ async def api_metrics_log(request: Request):
 # DAILY LOG (Morning Questionnaire) APIs
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# 3.14.0 F1 — intervals.icu answers the morning form has no question for. Shown
+# to the rider only (codes from intervals.icu's developer, see db.icu_check_in);
+# mood and motivation never reach the planner, and an injury reaches it only
+# through the check-in's soreness (db.icu_check_in).
+_ICU_EXTRA_LABELS = {
+    "mood":       {1: "Great", 2: "Good", 3: "OK", 4: "Grumpy"},
+    "motivation": {1: "Extreme", 2: "High", 3: "Average", 4: "Low"},
+    "injury":     {1: "None", 2: "Niggle", 3: "Poor", 4: "Injured"},
+}
+
+
+def _check_in_sources(row: dict | None) -> dict:
+    """Where each Hooper answer of a check-in row came from: "intervals.icu",
+    "default" (an imported day, but not answered there) or "manual"."""
+    if not row:
+        return {}
+    answered = set(str(row.get("icu_fields") or "").split(",")) - {""}
+    if not answered:
+        return {c: "manual" for c in db.HOOPER_COLS}
+    return {c: ("intervals.icu" if c in answered else "default") for c in db.HOOPER_COLS}
+
+
+def _icu_wellness_today() -> dict:
+    """Today's intervals.icu wellness record as the sync stored it, or {}."""
+    try:
+        r = db.get_db().execute("SELECT raw_json FROM wellness WHERE date = ?",
+                                (clock.today().isoformat(),)).fetchone()
+        rec = json.loads(r["raw_json"]) if r and r["raw_json"] else {}
+    except Exception:  # noqa: BLE001 — no store, no extras
+        return {}
+    return rec if isinstance(rec, dict) else {}
+
+
+def _icu_extras(rec: dict) -> dict:
+    """{"mood": "Good", ...}: the extras answered in ``rec``, labelled."""
+    out = {}
+    for key, labels in _ICU_EXTRA_LABELS.items():
+        v = rec.get(key)
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        if isinstance(v, int) and not isinstance(v, bool) and v in labels:
+            out[key] = labels[v]
+    return out
+
+
 @app.get("/api/daily-log")
 def api_daily_log(days: int = Query(14)):
-    """Return today's log entry + recent history."""
+    """Return today's log entry + recent history.
+
+    3.14.0 F1 adds ``sources`` (per Hooper question: "intervals.icu",
+    "default" or "manual"), ``icu_extras`` (mood / motivation / injury from
+    today's intervals.icu wellness, labelled), ``icu_sleep_from_watch`` (an
+    imported day whose sleep quality came from a watch's sleep score and is
+    not counted) and ``band`` (today's check-in band, the one the planner
+    and the verdict use).
+    """
     today = db.get_daily_log_today()
     history = db.query_daily_log(days)
-    return {"today": today, "history": history}
+    rec = _icu_wellness_today()
+    band = None
+    if today:
+        try:
+            import readiness_composite as _rc
+            band = _rc.hooper_band(clock.today().isoformat(), today_row=today)
+        except Exception:  # noqa: BLE001 — the card falls back to no colour
+            band = None
+    sources = _check_in_sources(today)
+    from ride_storage import wellness_value as _wv
+    from_watch = bool(
+        sources.get("sleep_quality") == "default"
+        and rec.get("sleepQuality") is not None
+        and _wv("sleepScore", rec.get("sleepScore")) is not None)
+    return {"today": today, "history": history, "sources": sources,
+            "icu_extras": _icu_extras(rec), "icu_sleep_from_watch": from_watch,
+            "band": band}
 
 
 @app.post("/api/daily-log")
@@ -10641,6 +10784,15 @@ def _get_soreness_subjective() -> float | None:
     Mapping (1=best, 7=worst): score = 10 - (val - 1) * 1.5, clamped 1..10.
     Returns None when no daily_log row exists OR db is unreachable
     (defensive — some test fixtures use mocked DBs without the table).
+
+    3.14.0 neutral rule (grill M8; owner: an ordinary day is neutral): when
+    no answer is worse than "Normal", the Hooper part is ABSENT, not 5.5/10.
+    The form starts every question at Normal, and 5.5 reads as 50/100 on the
+    0-100 composite, under its 60 line: answering "Normal" lowered an ordinary
+    rider's readiness, and could cost a hard session. Better-than-Normal
+    answers do not raise it either, consistent with the asymmetric evidence
+    for the readiness rating below (Ten Haaf 2017 on the low side; Sansone
+    2023). One answer worse than Normal keeps the min() unchanged.
     """
     try:
         today_log = db.get_daily_log_today()
@@ -10649,6 +10801,7 @@ def _get_soreness_subjective() -> float | None:
     if not today_log:
         return None
     components: list[float] = []
+    worst_answer = None
     for key in ("soreness", "fatigue", "stress", "sleep_quality"):
         v = today_log.get(key)
         if v is None:
@@ -10657,7 +10810,11 @@ def _get_soreness_subjective() -> float | None:
             iv = int(v)
         except (TypeError, ValueError):
             continue
+        worst_answer = iv if worst_answer is None else max(worst_answer, iv)
         components.append(max(1.0, min(10.0, 10.0 - (iv - 1) * 1.5)))
+    if (worst_answer is not None
+            and worst_answer <= _readiness_composite_mod.HOOPER_NORMAL_ANSWER):
+        components = []                    # an ordinary day: no Hooper term
     # v3.6.0 — readiness-to-train enters as its OWN term, never into the min()
     # above. Direction matters: the four Hooper items are 1=best/7=worst and get
     # inverted by the mapping, while readiness-to-train is 1-10 where HIGH =
@@ -10685,12 +10842,10 @@ def _get_soreness_subjective() -> float | None:
     if hooper_worst is None:
         if rtt_score is None:
             return None
-        # No Hooper answers at all: the rating is the only thing there is, but
-        # it must not carry the channel on its own at full strength either —
-        # pull it toward neutral so an un-anchored self-rating cannot drive the
-        # composite to an extreme. (Not reachable through /api/daily-log today,
-        # which requires all four Hooper items; guarded because a future caller
-        # would otherwise hand one optional slider 100% of the channel.)
+        # No Hooper term (no answers, or 3.14.0: none worse than Normal): the
+        # rating is the only thing there is, but it must not carry the channel
+        # on its own at full strength either — pull it toward neutral so an
+        # un-anchored self-rating cannot drive the composite to an extreme.
         _NEUTRAL = 5.5
         return _NEUTRAL + _RTT_WEIGHT_DOWN * (rtt_score - _NEUTRAL)
     if rtt_score is None:

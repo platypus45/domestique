@@ -13086,9 +13086,10 @@ async function generatePlan(opts) {
     }
     $('plan-status').textContent = 'Plan generated!';
     $('plan-status').style.color = 'var(--green)';
-    const _lost = _ownLostNotice(d);
-    if (_lost.length) { $('plan-status').textContent = 'Plan generated! ' + _lost.join(' '); $('plan-status').style.color = 'var(--yellow)'; }
     await renderPlanJSON(d.plan_json);
+    // QA L5: own rides the new plan could not keep are said (after the render).
+    const _lost = (typeof _ownLostNotice === 'function') ? _ownLostNotice(d) : [];
+    if (_lost.length) { $('plan-status').textContent = 'Plan generated! ' + _lost.join(' '); $('plan-status').style.color = 'var(--yellow)'; }
     // L4-UX 4 — recognized-entry landing: scroll the grid to TODAY's week,
     // highlight it, note "picked up at week X of Y". Never land at week 1.
     if (body.entry_mode === 'recognized') {
@@ -14482,8 +14483,7 @@ function renderCalDay(d, wi, di, phaseKey, today) {
     plannedHtml = `<div class="cal-planned">
       <span class="cal-planned-type ${parts.cssCls}">${esc(parts.title)}</span>
       ${parts.warn}
-      <div class="cal-planned-meta">${parts.metaText}</div>
-      ${_om ? `<div class="cal-planned-meta card-own own-moved-mark">${esc(_om)}</div>` : ''}
+      <div class="cal-planned-meta">${parts.metaText}</div>${_om ? `<div class="cal-planned-meta card-own own-moved-mark">${esc(_om)}</div>` : ''}
     </div>`;
     if (scoreBadge) plannedHtml += scoreBadge;
   }
@@ -15385,8 +15385,7 @@ function renderThisWeekFromCalendar(data) {
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
         <div class="wc-meta">${planned.duration_min ? Math.round(planned.duration_min) + 'm' : ''}${planned.tss ? ' · ' + Math.round(planned.tss) + 'T' : ''} ${warn}</div>
         ${planned.user_moved ? '<div class="wc-meta" style="color:#60a5fa;font-style:italic;">moved</div>' : ''}
-        ${planned.own ? `<div class="wc-meta card-own" style="font-style:italic;">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</div>` : ''}
-        ${planned.own && _ownMovedLine(d.date) ? `<div class="wc-meta card-own own-moved-mark">${esc(_ownMovedLine(d.date))}</div>` : ''}
+        ${planned.own ? `<div class="wc-meta card-own" style="font-style:italic;">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</div>${_ownMovedLine(d.date) ? `<div class="wc-meta card-own own-moved-mark">${esc(_ownMovedLine(d.date))}</div>` : ''}` : ''}
       </div>`;
     } else if (cs === 'rest' && !actual) {
       // v4.5.1 FIX-UI B2 — only show REST when there's no actual ride. If user
@@ -15792,7 +15791,7 @@ async function submitAddRace() {
     if (d.plan_json) { await renderPlanJSON(d.plan_json); try { populatePlanFormFromGoal(d.plan_json.goal); } catch (_) {} }
     const ov = $('add-race-overlay'); if (ov) ov.remove();
     try { showToast(`Added ${payload.name || 'race'} on ${payload.date} — plan rescheduled (taper in, recovery after).`, 5000, 'success'); } catch (_) {}
-    _ownLostNotice(d);
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
   } catch (e) {
     if (st) { st.textContent = 'Failed: ' + e.message; st.style.color = 'var(--red)'; }
     if (btn) btn.disabled = false;
@@ -16056,7 +16055,7 @@ async function runPlanOpenSequence() {
         const ures = await _planStepRace(fetch('/api/plan/update?debounce=1', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: '{}'}), PLAN_STEP_TIMEOUT_MS, 'update');
         const uj = await ures.json().catch(() => ({}));
         if (uj && uj.plan_json) { try { await renderPlanJSON(uj.plan_json); } catch (_) {} }
-        _ownLostNotice(uj);
+        if (typeof _ownLostNotice === 'function') _ownLostNotice(uj);
         regenDetail = (uj && uj.status_message) ? uj.status_message
           : (uj && uj.action === 'skipped') ? 'already up to date'
           : 'rebalanced';
@@ -16120,7 +16119,7 @@ async function _doPlanUpdate({silent=false}={}) {
       return d;
     }
     if (d.plan_json) await renderPlanJSON(d.plan_json);
-    _ownLostNotice(d);
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
     const lui = (d.plan_json && d.plan_json.last_update_info) || {};
     const behind = !!lui.behind_plan;
     if (behind) {
@@ -16172,8 +16171,8 @@ async function regeneratePlan() {
       (info.taper_compressed ? ' · Taper compressed to 8 days' : '');
     $('plan-status').style.color = 'var(--green)';
     $('plan-gap-alert').style.display = 'none';
-    _ownLostNotice(d);
     await renderPlanJSON(d.plan_json);
+    if (typeof _ownLostNotice === 'function') _ownLostNotice(d);
     // v1.4.0 — mandatory loadCalendar() after every plan mutation.
     try { await loadCalendar(); } catch(_) {}
   } catch(e) {

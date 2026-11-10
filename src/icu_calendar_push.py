@@ -46,7 +46,10 @@ Contract highlights (GRILL OUTCOME — LOCKED, /tmp/IP_ICU_PUSH.md):
     back. A rider move of an own event is held like #28 and reported as
     own_moved; the plan follows it only when the rider says so (the plan's
     own ride then sits on the event's day, moved_from the old one), and
-    "put it back" (own.put_back_from = the event's date) re-dates it.
+    "put it back" (own.put_back_from = the event's date) re-dates it. Own
+    rides follow the window like workouts. A workout sent with the Send
+    button past the window stays there until the window reaches its day,
+    also when an own ride has since replaced it (grill X9).
   - Rider moves in intervals.icu (#28, step 1 — reconcile never writes the
     plan): our event dated on another day than the one in its external_id
     was moved by the rider. Unless the plan agrees with the move (a session
@@ -1022,8 +1025,11 @@ def _own_held_ids(events: list, by_day: dict, profile_id: str, today: date,
         ev, d = moved[0]
         day = d.isoformat()
         if len(evs) == 1 and d >= today:
-            if any(_own(s) is not None and s.get("moved_from") == enc
-                   for s in by_day.get(day) or []):
+            # The ride left the encoded day (a ride still there is another
+            # one, whose event this is) and sits on the event's day.
+            if (not any(_own(s) is not None for s in by_day.get(enc) or [])
+                    and any(_own(s) is not None and s.get("moved_from") == enc
+                            for s in by_day.get(day) or [])):
                 agreed[eid] = f"{prefix}{day}:own"
                 continue
             if eid in pushed and any((_own(s) or {}).get("put_back_from") == day
@@ -1389,7 +1395,8 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
             ({"day": enc, "icu_day": _event_day(ev).isoformat()}
              for enc, ev in held_own.values()
              if _event_day(ev) >= today
-             and any(_own(s) is not None for s in by_day.get(enc) or [])),
+             and any(_own(s) is not None and not _own_is_imported(_own(s))
+                     for s in by_day.get(enc) or [])),
             key=lambda m: m["day"])
         if held:
             stand_ins = _stand_ins(held, by_day, profile_id, names)

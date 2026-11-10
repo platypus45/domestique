@@ -788,6 +788,36 @@ global.icuPushRefreshButton = () => {};
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_the_push_button_and_the_sync_toast_name_the_riders_weeks():
+    src = DASHBOARD.read_text(encoding="utf-8")
+    harness = "".join(_extract_js_function(src, fn) + "\n" for fn in (
+        "icuPushRefreshButton", "icuCalSyncToggle")) + """
+const els = {};
+global.$ = (id) => els[id] || (els[id] = {id, style: {}, value: '42', textContent: '',
+                                          disabled: false, checked: true});
+let answer = {connected: true, write_ok: true, horizon_days: 28};
+global.fetch = async () => ({json: async () => answer});
+const toasts = [];
+global.showToast = (m) => toasts.push(m);
+global.icuPushToastFromResult = () => {};
+global.icuCalSyncRefresh = () => {};
+global.icuPushNow = () => {};
+global.openSettingsConnections = () => {};
+(async () => {
+  await icuPushRefreshButton();
+  if (!$('btn-icu-push').title.startsWith('Send the next 4 weeks of your plan'))
+    throw new Error($('btn-icu-push').title);
+  answer = {ok: true, sync_enabled: true};
+  await icuCalSyncToggle({checked: true, disabled: false});
+  if (toasts[0] !== 'Calendar sync on — plan changes now mirror to intervals.icu (next 6 weeks).')
+    throw new Error(toasts[0]);
+  console.log('OK');
+})().catch((e) => { console.error(e); process.exit(1); });
+"""
+    _run_node(harness)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
 def test_each_answer_gets_its_own_words():
     """L7 / T26: the window row and the shared toast."""
     src = DASHBOARD.read_text(encoding="utf-8")

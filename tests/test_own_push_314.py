@@ -249,6 +249,19 @@ def test_a_drag_of_our_own_ride_in_intervals_icu_is_held_and_reported(env):
     assert own not in deleted and env.fk.where(own) == [D["sun"]]
 
 
+def test_a_ride_since_linked_to_the_riders_own_event_is_not_reported_as_moved(env):
+    """Our event of the manual ride was moved, then the ride was linked to
+    the rider's intervals.icu event: that dialog shows the rider's event."""
+    ss = _with_own_saturday(env)
+    _run(env)
+    own = _own_id(env, D["sat"])
+    env.fk.drag(own, D["sun"])
+    ss[_at(ss, D["sat"])] = _own_row(D["sat"], source="icu", icu_event_id=900)
+    _write_plan(ss)
+    r = _run(env)
+    assert r["own_moved"] == [] and r["held"] == 1 and env.fk.where(own) == [D["sun"]]
+
+
 def test_move_it_in_my_plan_too_replaces_the_old_event_once_the_new_one_is_out(env):
     ss = _with_own_saturday(env)
     _run(env)
@@ -265,6 +278,23 @@ def test_move_it_in_my_plan_too_replaces_the_old_event_once_the_new_one_is_out(e
     assert env.fk.where(new) == [D["sun"]] and env.fk.where(old) == []
     assert r["held"] == 0 and r["own_moved"] == []
     assert _counts(_run(env)) == (0, 0, 0)
+
+
+def test_a_second_ride_on_the_old_day_is_not_mistaken_for_an_agreed_move(env):
+    """Ride A moved Sat → Sun earlier (moved_from Sat stays on it); ride B
+    was added on Saturday since. The rider drags B's event onto Sunday:
+    that is B's move, held, not A's old one."""
+    ss = _week(mon="sweet.zwo")
+    ss[_at(ss, D["sun"])] = _own_row(D["sun"], name="Ride A", moved_from=D["sat"])
+    ss[_at(ss, D["sat"])] = _own_row(D["sat"], name="Ride B")
+    _seed(env, ss)
+    b = _own_id(env, D["sat"])
+    env.fk.drag(b, D["sun"])
+    mark = len(env.fk.calls)
+    r = _run(env)
+    posted, deleted = _touched(env, mark)
+    assert b not in posted | deleted and env.fk.where(b) == [D["sun"]]
+    assert r["own_moved"] == [{"day": D["sat"], "icu_day": D["sun"]}]
 
 
 def test_the_old_event_stays_while_the_new_one_cannot_be_pushed(env, monkeypatch):

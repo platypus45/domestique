@@ -47,7 +47,7 @@ def _bootstrap_default_profile(base: Path) -> None:
     registry = {
         "version": 1, "active_profile": "default", "skip_picker": True,
         "profiles": [{
-            "id": "default", "name": "Martijn", "color": "#3b82f6",
+            "id": "default", "name": "Sam", "color": "#3b82f6",
             "created": "2026-04-01T10:00:00", "last_used": "2026-04-12T10:00:00",
         }],
     }
@@ -511,16 +511,16 @@ class TestUpdateProfile(unittest.TestCase):
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def test_update_profile(self):
-        self.pm.update_profile("default", name="Martijn H.", color="#ef4444")
+        self.pm.update_profile("default", name="Sam K.", color="#ef4444")
         # Check in memory
-        self.assertEqual(self.pm.profile_name, "Martijn H.")
+        self.assertEqual(self.pm.profile_name, "Sam K.")
         self.assertEqual(self.pm.profile_color, "#ef4444")
         # Check persisted on disk
         reg = json.loads(
             (Path(self.tmp) / ".domestique" / "profiles.json").read_text()
         )
         p = [x for x in reg["profiles"] if x["id"] == "default"][0]
-        self.assertEqual(p["name"], "Martijn H.")
+        self.assertEqual(p["name"], "Sam K.")
         self.assertEqual(p["color"], "#ef4444")
 
 

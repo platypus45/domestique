@@ -2699,7 +2699,7 @@ Identical to v1.8.5 — download DMG → drag → double-click, zero Gatekeeper 
 
 ## v1.8.5 — Apple notarized DMG (zero Gatekeeper prompts on download) (2026-05-20)
 
-Maintainer enrolled in Apple Developer Program (team `VB8TF5LQ8P`). v1.8.5 is the first Domestique release codesigned with `Developer ID Application: Martijn Haring (VB8TF5LQ8P)` AND notarized through Apple's malware scan AND stapled offline.
+Maintainer enrolled in Apple Developer Program (team `VB8TF5LQ8P`). v1.8.5 is the first Domestique release codesigned with the maintainer's `Developer ID Application` certificate AND notarized through Apple's malware scan AND stapled offline.
 
 ### What changes for users
 
@@ -4385,7 +4385,7 @@ Pre-v4.6.6 the planner *detected* TSS/intensity/soreness signals in three indepe
 
 ### NEW
 - **`training.discover_athlete_id(api_key)` — auto-detects the authenticated athlete.** GETs `/api/v1/athlete/0` (ICU resolves `0` → the API key's owner) and returns the parsed `{id, name, ...}` dict. Used by `/api/setup/save` so the user only has to paste an API key — no more typo-induced HTTP 403 from a mistyped 7-char athlete ID.
-- **Settings UI: athlete ID is now optional.** The athlete-ID input is hidden behind an "Advanced: enter athlete ID manually" toggle. After saving an API key, an inline badge shows `Auto-detected: i225278 — Haringo`. If a user opens "Advanced" and types an ID that disagrees with the API key's owner, the response carries a `warning` field and the dashboard alerts the user — but still honours the user-submitted override.
+- **Settings UI: athlete ID is now optional.** The athlete-ID input is hidden behind an "Advanced: enter athlete ID manually" toggle. After saving an API key, an inline badge shows `Auto-detected: i225278 — <athlete name>`. If a user opens "Advanced" and types an ID that disagrees with the API key's owner, the response carries a `warning` field and the dashboard alerts the user — but still honours the user-submitted override.
 - **`/api/setup/save` response fields.** New optional fields: `athlete_id_detected` (set when the server filled in a missing ID), `athlete_name` (bonus from `/athlete/0`), `warning` (set on submitted-vs-discovered ID mismatch).
 
 ### Tests

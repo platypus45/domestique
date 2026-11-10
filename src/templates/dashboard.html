@@ -7411,12 +7411,21 @@ async function loadReadinessComposite() {
       tier_down: { word: 'Ease off today', color: 'var(--yellow)' },
       rest:      { word: 'Rest advised',   color: 'var(--red)' },
     };
-    const st = STATE[sev] || { word: 'Train as planned', color: 'var(--text2)' };
+    // O9 (3.14.0, owner): no readiness data means no readiness verdict. The
+    // number is then a stand-in, never shown; without a check-in the card
+    // says there is not enough data (today's session stays as planned).
+    const noData = (d.readiness_data === false);
+    const noVerdict = noData && source !== 'hooper';
+    const st = noVerdict ? { word: 'Not enough data', color: 'var(--text2)' }
+             : (STATE[sev] || { word: 'Train as planned', color: 'var(--text2)' });
+    // QA-INT page-load race: the server says whether today is the rider's own
+    // ride, so "Ease today's session" never shows on it whichever load wins.
+    const ownToday = !!(d.today_is_own || window._todayIsOwn);
 
     // Source pill names WHY — the key fix for "66/100 but rest?!".
     // 3.14.0 F1: a check-in imported from intervals.icu says so.
     const srcLabel = source === 'hooper'
-                     ? (d.checkin_imported ? 'From your intervals.icu check-in' : 'From your leg-check')
+                     ? (d.checkin_imported ? 'From your intervals.icu check-in' : 'From your check-in')
                    : source === 'tsb_hrv_auto' ? 'From HRV + form'
                    : source === 'insufficient' ? 'Limited data' : '';
     // 3.14.0 (owner decision M3): an injury logged in intervals.icu always
@@ -7427,13 +7436,14 @@ async function loadReadinessComposite() {
       ? `<span style="display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;background:var(--surface2);color:var(--text2);margin-left:8px;vertical-align:middle;">${esc(srcLabel)}</span>`
       : '';
 
-    const numTxt = (s100 != null) ? Math.round(s100) : '—';
+    const numTxt = (s100 != null && !noData) ? Math.round(s100) : '—';
     const circle = `
       <div style="width:72px;height:72px;border-radius:50%;border:6px solid ${st.color};display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:800;flex-shrink:0;">
         ${numTxt}<span style="font-size:9px;font-weight:400;color:var(--text3);margin-left:1px;">/100</span>
       </div>`;
 
-    const why = reasons.length ? reasons[0] : advice;
+    const why = noVerdict ? "Not enough readiness data yet: today's session stays as planned."
+              : (reasons.length ? reasons[0] : advice);
 
     // Single action, gated on severity. ids preserved for the handlers.
     let actionHtml = '';
@@ -7447,7 +7457,7 @@ async function loadReadinessComposite() {
     } else if (sev === 'tier_down') {
       actionHtml = `
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          ${window._todayIsOwn ? '' : `<button class="btn btn-primary" id="apply-tier-down-btn" onclick="applyReadinessTierDown()" style="font-size:11px;padding:5px 12px;">⇣ Ease today's session</button>`}
+          ${ownToday ? '' : `<button class="btn btn-primary" id="apply-tier-down-btn" onclick="applyReadinessTierDown()" style="font-size:11px;padding:5px 12px;">⇣ Ease today's session</button>`}
           <button class="btn" id="apply-week-tier-down-btn" onclick="applyWeekAutoAdjust()" style="font-size:11px;padding:5px 12px;">Auto-adjust this week</button>
         </div>
         <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>
@@ -16285,7 +16295,7 @@ function _weightFollowNote(d, on) {
   if (!on) return '';
   const w = d.weight_icu_latest;
   return w
-    ? `Follows your intervals.icu weight: ${Number(w.value).toFixed(1)} kg on ${esc(w.date)}. Changes under 0.5 kg are left out.`
+    ? `Follows your intervals.icu weight: ${Number(w.value).toFixed(1)} kg on ${esc(_entryFmtDate(w.date) || w.date)}. Changes under 0.5 kg are left out.`
     : 'No intervals.icu weight in the last 30 days yet. Your weight stays as it is until one arrives.';
 }
 function _renderWeightFollow(d) {
@@ -17461,25 +17471,35 @@ document.addEventListener('mouseout', e => {
 // the answers the form has no question for (mood, motivation, injury).
 function _morningIcuLines(d) {
   const src = (d && d.sources) || {};
-  const NAME = {sleep_quality: 'sleep', fatigue: 'energy', stress: 'stress', soreness: 'soreness'};
+  // QX-L4: intervals.icu calls it fatigue, and a soreness that only the
+  // injury raised says so.
+  const NAME = {sleep_quality: 'sleep', fatigue: 'energy (fatigue)', stress: 'stress',
+                soreness: (d && d.icu_soreness_from_injury) ? 'soreness (from your injury)' : 'soreness'};
   const ORDER = ['sleep_quality', 'fatigue', 'stress', 'soreness'];
+  const watchSleep = !!(d && d.icu_sleep_from_watch);
   const fromIcu = ORDER.filter(f => src[f] === 'intervals.icu').map(f => NAME[f]);
-  const notAns = ORDER.filter(f => src[f] === 'default').map(f => NAME[f]);
+  // QX-L3: a watch's sleep gets one line of its own, not a second "not answered".
+  const notAns = ORDER.filter(f => src[f] === 'default' && !(f === 'sleep_quality' && watchSleep))
+                      .map(f => NAME[f]);
   const personal = !!(d && d.band && d.band.mode === 'personal');
+  const counted = personal ? 'your usual answer' : 'Normal';
   const ex = (d && d.icu_extras) || {};
   const line = t => `<div style="font-size:10px;color:var(--text3);margin-top:2px;">${t}</div>`;
   let html = '';
   if (fromIcu.length) {
     html += line(`From intervals.icu: ${esc(fromIcu.join(', '))}`);
     if (notAns.length) {
-      html += line(`Not answered there, counted as ${personal ? 'your usual answer' : 'Normal'}: ${esc(notAns.join(', '))}`);
+      html += line(`Not answered there, counted as ${counted}: ${esc(notAns.join(', '))}`);
     }
-    if (d.icu_sleep_from_watch) html += line('Sleep: from your watch, not counted as an answer.');
-    if ((ex.injury === 'Poor' || ex.injury === 'Injured') && src.soreness === 'intervals.icu') {
-      html += line('Your injury counts as sore legs today.');
+    if (watchSleep) {
+      html += line(`Sleep: your watch's sleep score is not a check-in answer, so sleep counts as ${counted}.`);
     }
+  } else if (d && d.icu_answers_today && ORDER.some(f => src[f] === 'manual')) {
+    // QX-L13: the rider's own check-in wins; say that intervals.icu's is not used.
+    html += line('Your answers in intervals.icu today are not used: you checked in here.');
   }
-  const exParts = ['mood', 'motivation', 'injury'].filter(k => ex[k]).map(k => `${k} ${esc(ex[k])}`);
+  const exParts = ['mood', 'motivation', 'injury'].filter(k => ex[k])
+    .map(k => (k === 'injury' && ex[k] === 'None') ? 'no injury' : `${k} ${esc(ex[k])}`);
   if (exParts.length) html += line(`In intervals.icu today: ${exParts.join(' · ')}`);
   return html;
 }
@@ -17492,6 +17512,8 @@ async function loadMorningLog() {
     // and the rider could not see the rating that was already in the database.
     window._todayLog = (d && d.today) || null;
     window._todayIcuLines = _morningIcuLines(d);
+    // QX-L13: on an imported day the form says that saving makes it yours.
+    window._todayIcuImported = Object.values((d && d.sources) || {}).includes('intervals.icu');
     // v4.6.6 IMPL-C — the Hooper sum: show "logged" when ANY of the 4 fields
     // is recorded (a form save or an intervals.icu check-in).
     if (d.today && (d.today.sleep_quality || d.today.fatigue || d.today.stress || d.today.soreness)) {
@@ -17625,8 +17647,9 @@ function showMorningForm(stored) {
   // 3.14.0 F1: the intervals.icu lines ride along in the form too (the
   // extras, and on "Change" what the imported answers were).
   $('morning-log-content').innerHTML = `
-    <div style="margin-bottom:8px;font-size:12px;color:var(--text2);font-weight:600;">Morning leg-check (Hooper)</div>
+    <div style="margin-bottom:8px;font-size:12px;color:var(--text2);font-weight:600;">Morning check-in</div>
     ${window._todayIcuLines ? `<div style="margin:-4px 0 8px 0;">${window._todayIcuLines}</div>` : ''}
+    ${window._todayIcuImported ? `<div style="font-size:10px;color:var(--text3);margin:-4px 0 8px 0;">Saving here replaces today's answers from intervals.icu.</div>` : ''}
     ${HOOPER_QUESTIONS.map(([f,p,c]) => _renderHooperRow(f,p,c)).join('')}
     ${_renderReadinessRow()}
     <div style="display:flex;gap:6px;align-items:center;margin-top:6px;">
@@ -20585,22 +20608,29 @@ async function loadBodyPerf() {
 
     let html = '<div style="display:flex;gap:20px;flex-wrap:wrap;">';
 
-    // Weight. 3.14.0 W1/W2: the history now carries intervals.icu's scale
-    // readings; the headline is the weight the planner uses once the profile
-    // records whose it is (typed, or followed from intervals.icu), so the two
-    // never disagree. A profile with no source keeps the newest history value.
+    // Weight. 3.14.0 (QA QX-M7): one weight everywhere. The headline is the
+    // profile weight (the header, Settings and the planner use it), labelled
+    // when it follows intervals.icu; a newer intervals.icu reading that
+    // differs gets its own small line; the W/kg tile is Settings' FTP ÷ that
+    // weight. The sparkline stays the history (scale readings included).
     const wVals = wData.map(d => d.value);
     let wCurrent = wVals.length ? wVals[wVals.length-1] : null;
-    let wLabel = 'Weight';
+    let wLabel = 'Weight', wIcuLine = '', wkgProfile = null;
     try {
       const s = await (await getResource('/api/settings')).json();
-      if (s && s.weight_source && s.weight != null) {
+      if (s && s.weight != null) {
         wCurrent = Number(s.weight);
         if (s.weight_source === 'icu') wLabel = 'Weight · intervals.icu';
+        const icuW = s.weight_icu_latest;
+        if (icuW && Math.abs(Number(icuW.value) - wCurrent) >= 0.05) {
+          wIcuLine = `intervals.icu: ${Number(icuW.value).toFixed(1)} kg (${esc(_entryFmtDate(icuW.date) || icuW.date)})`;
+        }
+        if (s.w_per_kg != null) wkgProfile = Number(s.w_per_kg);
       }
     } catch (_) { /* history headline stands */ }
     html += `<div style="text-align:center;"><div style="font-size:22px;font-weight:700;">${wCurrent ? wCurrent.toFixed(1)+'kg' : '—'}</div>
       <div style="font-size:10px;color:var(--text2);">${wLabel}</div>
+      ${wIcuLine ? `<div style="font-size:9px;color:var(--text3);">${wIcuLine}</div>` : ''}
       ${wVals.length >= 2 ? miniSparklineSVG(wVals, 80, 24, 'var(--accent)') : ''}</div>`;
 
     // FTP
@@ -20612,7 +20642,8 @@ async function loadBodyPerf() {
 
     // W/kg
     const wkgVals = wkgData.map(d => d.value);
-    const wkgCurrent = wkgVals.length ? wkgVals[wkgVals.length-1] : (wCurrent && fCurrent ? (fCurrent/wCurrent).toFixed(2) : null);
+    const wkgCurrent = (wkgProfile != null) ? wkgProfile
+      : (wkgVals.length ? wkgVals[wkgVals.length-1] : (wCurrent && fCurrent ? (fCurrent/wCurrent).toFixed(2) : null));
     html += `<div style="text-align:center;"><div style="font-size:22px;font-weight:700;">${wkgCurrent ? Number(wkgCurrent).toFixed(2) : '—'}</div>
       <div style="font-size:10px;color:var(--text2);">W/kg</div>
       ${wkgVals.length >= 2 ? miniSparklineSVG(wkgVals, 80, 24, '#f472b6') : ''}</div>`;

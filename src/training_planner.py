@@ -17161,7 +17161,16 @@ def adjust_today_session(
             description=f"Z2 (DFA α1 cap: mean {dfa_cap.get('mean_alpha1')} < 0.5)",
             adapted=True,
         ), f"DFA α1 {dfa_cap.get('mean_alpha1')} < 0.5 → capped at Z2"
-    score = float(readiness.get("score") or 50)
+    # O9 (3.14.0, owner): no readiness data means no readiness rule. A missing
+    # score is not 50, and neither is the neutral 50 callers fill in for one
+    # (the home gauges, /api/today-session): read as a reading it put every
+    # hard session under the 40-59 all-Z2 rule for a rider with no HRV,
+    # sleep or resting heart rate. Only a real score reaches the rules below.
+    _raw_score = readiness.get("score")
+    score = (None if (_raw_score is None
+                      or readiness.get("status") == "INSUFFICIENT_DATA"
+                      or readiness.get("data_status") == "insufficient_data")
+             else float(_raw_score))
 
     # ── v4.6.6 INJURY-GATES — priority: G5 > G6 > G2 > HRV/score > G1 > G7 ──
     if daily_log_today is None:
@@ -17180,18 +17189,30 @@ def adjust_today_session(
         except (TypeError, ValueError):
             sv = 0
         if sv >= 6 and planned.session_type not in ("rest", "recovery"):
-            log.info(f"EVENT=injury_gate_g5 soreness={sv} session={planned.session_type} → recovery")
+            # 3.14.0 (QX-M6): plain words for the rider (the log line keeps the
+            # numbers), and an injury logged in intervals.icu is named as the
+            # cause: it reaches this gate as soreness, and blaming sore legs
+            # the rider never reported reads as a bug.
+            injury = None
+            if "soreness" in str(daily_log_today.get("icu_fields") or "").split(","):
+                try:
+                    import db as _db
+                    injury = _db.icu_injury_label((planned.day or clock.today()).isoformat())
+                except Exception:  # noqa: BLE001 — the gate stands, the wording falls back
+                    injury = None
+            log.info(f"EVENT=injury_gate_g5 soreness={sv} injury={injury} "
+                     f"session={planned.session_type} → recovery")
+            cause = (f"You logged an injury in intervals.icu ({injury})" if injury
+                     else "Sore legs this morning")
             return PlannedSession(
                 day=planned.day, day_name=planned.day_name,
                 session_type="recovery",
                 duration_min=max(30, planned.duration_min // 2),
                 tss_estimate=round(planned.duration_min / 2 / 60 * TSS_PER_HOUR["recovery"]),
-                description=(
-                    f"Recovery — soreness {sv}/7 (peripheral fatigue, "
-                    f"Hooper 1995 + Cheung 2003)."
-                ),
+                description=("Recovery ride — the injury you logged in intervals.icu."
+                             if injury else "Recovery ride — sore legs today."),
                 adapted=True,
-            ), f"G5 soreness {sv}/7 → forced recovery (peripheral fatigue bypass)"
+            ), f"{cause} — today's session is a short recovery ride."
 
     # G6: the morning check-in band is "rest" → Z2 cap. 3.14.0: the band
     # replaces the fixed "Hooper >= 18", which had no traceable source and
@@ -17262,8 +17283,8 @@ def adjust_today_session(
             ), f"HRV below SWC day 1 → capped at Z2 (was {planned.session_type})"
         return planned, ""
 
-    # Readiness-based adjustments
-    if score < 40:
+    # Readiness-based adjustments (only with readiness data, O9 above)
+    if score is not None and score < 40:
         return PlannedSession(
             day=planned.day, day_name=planned.day_name,
             session_type="rest", duration_min=0, tss_estimate=0,
@@ -17271,7 +17292,7 @@ def adjust_today_session(
             adapted=True,
         ), f"Readiness {score:.0f} < 40 → forced rest"
 
-    if score < 60 and planned.session_type in ("vo2max", "threshold", "overunder", "sweetspot", "tempo", "long_z2", "ftp_test"):
+    if score is not None and score < 60 and planned.session_type in ("vo2max", "threshold", "overunder", "sweetspot", "tempo", "long_z2", "ftp_test"):
         return PlannedSession(
             day=planned.day, day_name=planned.day_name,
             session_type="z2", duration_min=planned.duration_min,

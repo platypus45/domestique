@@ -254,6 +254,8 @@ class TestImportedCheckInThroughTodaySession(_IntegrationBase):
         self._import(injury=4)
         out = self._today_session()
         self.assertEqual((out.get("adjusted") or {}).get("session_type"), "recovery", out)
+        # QX-M6: the card names the injury, not "G5 soreness 6/7".
+        self.assertIn("You logged an injury in intervals.icu (Injured)", out.get("reason") or "")
 
 
 # ── T6/T7: a check-in the rider saved is never written ──────────────────────
@@ -425,7 +427,10 @@ def test_mt7_an_injury_counts_as_sore_legs_and_gets_its_own_line(today):
     assert r["soreness"] == TIRED and r["icu_fields"] == "soreness"
     out = _readiness()
     assert out["severity"] != "normal"
-    assert "injury" in (out["injury_note"] or "") and "recovery" in out["injury_note"]
+    # Wave 4 (QX-M1): the line is worded by today's session; with none
+    # planned here, it names the injury without promising a recovery ride
+    # (the planned-session case is test_qx_m1_the_injury_line_says_what_happens_today).
+    assert "injury" in (out["injury_note"] or "") and "counts as sore legs" in out["injury_note"]
 
 
 def test_mt7_a_niggle_changes_nothing_but_is_still_named(today):
@@ -530,9 +535,9 @@ def test_mt5_without_the_column_one_warning_per_pass_and_no_write(tmp_path, free
 
 def test_t16_the_card_and_the_verdict_name_intervals_icu():
     src = DASH.read_text(encoding="utf-8")
-    for needle in ("From intervals.icu", "counted as ${personal ? 'your usual answer' : 'Normal'}",
-                   "From your intervals.icu check-in", "not counted as an answer",
-                   "Your injury counts as sore legs today", "In intervals.icu today"):
+    for needle in ("From intervals.icu", "counted as ${counted}",
+                   "From your intervals.icu check-in", "is not a check-in answer",
+                   "soreness (from your injury)", "In intervals.icu today"):
         assert needle in src, needle
     start = src.index("async function loadMorningLog()")
     body = src[start:src.index("\n}\n", start)]
@@ -548,11 +553,11 @@ def test_t16_the_card_lines_render_what_the_api_says():
 const a = _morningIcuLines({
   sources: {sleep_quality: 'default', fatigue: 'intervals.icu', stress: 'default', soreness: 'intervals.icu'},
   band: {band: 'tier_down', mode: 'fixed'}, icu_sleep_from_watch: true,
-  icu_extras: {mood: 'Good', injury: 'Injured'}});
-if (!a.includes('From intervals.icu: energy, soreness')) throw new Error(a);
-if (!a.includes('counted as Normal: sleep, stress')) throw new Error(a);
-if (!a.includes('Sleep: from your watch')) throw new Error(a);
-if (!a.includes('Your injury counts as sore legs today')) throw new Error(a);
+  icu_soreness_from_injury: true, icu_extras: {mood: 'Good', injury: 'Injured'}});
+if (!a.includes('From intervals.icu: energy (fatigue), soreness (from your injury)')) throw new Error(a);
+if (!a.includes('counted as Normal: stress')) throw new Error(a);
+if (a.includes('counted as Normal: sleep')) throw new Error('sleep listed twice: ' + a);
+if (!a.includes("Sleep: your watch's sleep score is not a check-in answer, so sleep counts as Normal.")) throw new Error(a);
 if (!a.includes('In intervals.icu today: mood Good · injury Injured')) throw new Error(a);
 const b = _morningIcuLines({sources: {sleep_quality: 'default', fatigue: 'intervals.icu',
   stress: 'default', soreness: 'default'}, band: {band: 'normal', mode: 'personal'}, icu_extras: {}});
@@ -560,6 +565,281 @@ if (!b.includes('counted as your usual answer')) throw new Error(b);
 const c = _morningIcuLines({sources: {sleep_quality: 'manual', fatigue: 'manual', stress: 'manual',
   soreness: 'manual'}, band: {band: 'normal', mode: 'fixed'}, icu_extras: {}});
 if (c !== '') throw new Error('a manual day shows intervals.icu lines: ' + c);
+console.log('OK');
+""")
+    _run_node(harness)
+
+
+# ═══ Wave 4 (3.14.0 fixes) ════════════════════════════════════════════════════
+
+_REAL_WITH_DATA_STATUS = app_module._readiness_with_data_status
+_NO_READINESS = {"score": None, "status": "INSUFFICIENT_DATA", "advice": "",
+                 "components": {}, "missing": ["hrv", "tsb", "subjective", "sleep", "rhr"]}
+
+
+def _readiness_with(training, sleep):
+    with patch.object(app_module, "cached",
+                      side_effect=lambda k, fn: training if k == "training" else sleep), \
+         patch.object(app_module, "_local_sleep_metrics", return_value={}), \
+         patch.object(app_module, "_merge_training_load", return_value=dict(training)), \
+         patch.object(app_module, "_recent_dfa_and_decoupling",
+                      return_value=([], None, None, None)):
+        r = TestClient(app_module.app).get("/api/readiness")
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _plan_today(monkeypatch, tmp_path, rows):
+    """A stored plan whose today holds ``rows`` (each merged into a session)."""
+    d = tmp_path / "plans"
+    d.mkdir(exist_ok=True)
+    monkeypatch.setattr(tp, "PLAN_DIR", d)
+    base = {"day": DAY_ISO, "day_name": DAY.strftime("%A"), "session_type": "vo2max",
+            "duration_min": 60, "tss_estimate": 80, "description": "", "zwo_file": "",
+            "status": "pending"}
+    week = {"week_num": 1, "start": (DAY - timedelta(days=DAY.weekday())).isoformat(),
+            "end": (DAY + timedelta(days=6 - DAY.weekday())).isoformat(), "phase": "base",
+            "tss_target": 400, "is_stepback": False,
+            "sessions": [dict(base, **r) for r in rows]}
+    (d / "current_plan.json").write_text(
+        json.dumps({"goal": {"type": "general"}, "phases": [], "weeks": [week]}), encoding="utf-8")
+
+
+_OWN = {"name": "Club ride", "intensity": "hard", "load_from": "intensity", "source": "manual",
+        "icu_event_id": None, "icu_day": None, "replaced": None, "added_at": "2026-11-09T08:00:00"}
+
+
+# ── O9: no readiness data means no readiness rule ────────────────────────────
+
+@pytest.mark.parametrize("readiness", [
+    {"score": None},
+    {"score": 50, "status": "INSUFFICIENT_DATA", "data_status": "insufficient_data"},
+    {"score": 50, "data_status": "insufficient_data"},
+], ids=["missing", "stand-in-from-status", "stand-in-from-data-status"])
+def test_o9_no_readiness_data_leaves_the_session_as_planned(today, readiness):
+    planned = tp.PlannedSession(day=DAY, day_name="", session_type="vo2max",
+                                duration_min=60, tss_estimate=80, description="")
+    adj, reason = tp.adjust_today_session(planned, readiness, rides_recent=[],
+                                          daily_log_today={}, hooper_history=[])
+    assert (adj.session_type, reason) == ("vo2max", ""), reason
+
+
+def test_o9_a_real_low_score_still_eases(today):
+    planned = tp.PlannedSession(day=DAY, day_name="", session_type="vo2max",
+                                duration_min=60, tss_estimate=80, description="")
+    adj, _ = tp.adjust_today_session(planned, {"score": 50, "status": "MATIG", "data_status": "ok"},
+                                     rides_recent=[], daily_log_today={}, hooper_history=[])
+    assert adj.session_type == "z2"
+
+
+class TestNoReadinessDataThroughTodaySession(_IntegrationBase):
+    """O9 end to end: the stand-in 50 /api/today-session fills in is no reading."""
+
+    def setUp(self):
+        super().setUp()
+        self._o9 = [patch.object(app_module, "compute_readiness", return_value=dict(_NO_READINESS)),
+                    patch.object(app_module, "_readiness_with_data_status",
+                                 side_effect=_REAL_WITH_DATA_STATUS)]
+        for p in self._o9:
+            p.start()
+
+    def tearDown(self):
+        for p in reversed(self._o9):
+            p.stop()
+        super().tearDown()
+
+    def test_the_hard_session_stays_as_planned(self):
+        with patch.object(app_module, "_load_all_rides_safe", return_value=[]):
+            out = self.client.get("/api/today-session").json()
+        self.assertEqual(out["adjusted"]["session_type"], "vo2max", out.get("reason"))
+        self.assertFalse(out["was_modified"])
+        self.assertEqual(out["reason"], "")
+
+
+def test_o9_readiness_says_whether_it_had_data(today):
+    assert _readiness_with(_FAKE_TRAINING, _FAKE_SLEEP)["readiness_data"] is True
+    assert _readiness_with({}, {})["readiness_data"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("has_data", [False, True])
+def test_o9_the_verdict_says_there_is_not_enough_data(has_data):
+    from test_331_surfaces import _extract_js_function, _run_node
+    src = DASH.read_text(encoding="utf-8")
+    harness = """
+const host = {innerHTML: ''};
+const document = {getElementById: id => id === 'today-verdict' ? host : null};
+const window = {};
+function esc(s) { return String(s); }
+async function getResource(url) {
+  return {ok: true, json: async () => ({severity: 'normal', source: 'insufficient',
+          readiness_data: %s, score_0_100: 50,
+          severity_reasons: ['Insufficient wellness history for auto-adjust']})};
+}
+%s
+loadReadinessComposite().then(() => {
+  const h = host.innerHTML;
+  if (%s) {
+    if (!h.includes('Ready to train') || !h.includes('50<span')) throw new Error(h);
+  } else {
+    if (!h.includes('Not enough data') || h.includes('Ready to train')) throw new Error(h);
+    if (!h.includes("today's session stays as planned")) throw new Error(h);
+    if (h.includes('50<span') || !h.includes('—<span')) throw new Error('the stand-in 50 is shown: ' + h);
+  }
+  console.log('OK');
+});
+""" % ("true" if has_data else "false", _extract_js_function(src, "loadReadinessComposite"),
+       "true" if has_data else "false")
+    _run_node(harness)
+
+
+# ── QA-INT page-load race: the server says whether today is an own ride ──────
+
+def test_race_readiness_says_whether_today_is_the_riders_own_ride(today, monkeypatch, tmp_path):
+    _plan_today(monkeypatch, tmp_path, [{"own": dict(_OWN), "session_type": "sweetspot"}])
+    assert _readiness()["today_is_own"] is True
+    _plan_today(monkeypatch, tmp_path, [{}])
+    assert _readiness()["today_is_own"] is False
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("own", [True, False])
+def test_race_ease_today_hides_on_the_servers_word_alone(own):
+    from test_331_surfaces import _extract_js_function, _run_node
+    src = DASH.read_text(encoding="utf-8")
+    harness = """
+const host = {innerHTML: ''};
+const document = {getElementById: id => id === 'today-verdict' ? host : null};
+const window = {};          // loadTodaySession has not answered yet
+function esc(s) { return String(s); }
+async function getResource(url) {
+  return {ok: true, json: async () => ({severity: 'tier_down', source: 'hooper',
+          readiness_data: true, today_is_own: %s, score_0_100: 62,
+          severity_reasons: ['Your check-in is below your usual.']})};
+}
+%s
+loadReadinessComposite().then(() => {
+  const ease = host.innerHTML.includes('apply-tier-down-btn');
+  if (ease === %s) throw new Error('Ease today shown: ' + ease);
+  if (!host.innerHTML.includes('apply-week-tier-down-btn')) throw new Error('week button gone');
+  console.log('OK');
+});
+""" % ("true" if own else "false", _extract_js_function(src, "loadReadinessComposite"),
+       "true" if own else "false")
+    _run_node(harness)
+
+
+# ── QX-M1: the injury line says what happens to today ────────────────────────
+
+@pytest.mark.parametrize("row,expect,never", [
+    ({"own": dict(_OWN), "session_type": "tempo"}, "Your own ride stays as you planned it",
+     "recovery ride"),
+    ({"is_race": True, "session_type": "recovery", "description": "B RACE"},
+     "Your race stays as planned", "recovery ride"),
+    ({"session_type": "rest", "duration_min": 0, "tss_estimate": 0}, "Today is a rest day",
+     "recovery ride"),
+    ({"session_type": "recovery", "duration_min": 40}, "already an easy ride", "becomes"),
+    ({"session_type": "vo2max"}, "so today's session becomes a short recovery ride", None),
+], ids=["own-ride", "race", "rest", "recovery", "planned"])
+def test_qx_m1_the_injury_line_says_what_happens_today(today, monkeypatch, tmp_path,
+                                                      row, expect, never):
+    _plan_today(monkeypatch, tmp_path, [row])
+    _sync([_rec(injury=3)])
+    note = _readiness()["injury_note"]
+    assert expect in note, note
+    assert never is None or never not in note, note
+
+
+def test_qx_m1_keep_original_is_kept(today, monkeypatch, tmp_path):
+    _plan_today(monkeypatch, tmp_path, [{"session_type": "vo2max"}])
+    _sync([_rec(injury=4)])
+    monkeypatch.setattr(app_module, "_is_readiness_cap_reverted_today", lambda: True)
+    note = _readiness()["injury_note"]
+    assert "you chose to keep today's session as planned" in note and "becomes" not in note
+
+
+def test_qx_m1_no_session_today_reads_as_a_rest_day(today, monkeypatch, tmp_path):
+    _plan_today(monkeypatch, tmp_path, [{"day": "2026-11-11"}])
+    _sync([_rec(injury=3)])
+    assert "Today is a rest day" in _readiness()["injury_note"]
+
+
+# ── QX-M6: the recovery gate in plain words, naming an imported injury ───────
+
+def test_qx_m6_an_imported_injury_is_named_not_sore_legs(today):
+    _sync([_rec(fatigue=1, injury=3)])
+    planned = tp.PlannedSession(day=DAY, day_name="", session_type="vo2max",
+                                duration_min=60, tss_estimate=80, description="")
+    adj, reason = tp.adjust_today_session(planned, {"score": 90, "dfa_cap": {}},
+                                          rides_recent=[], daily_log_today=_row(),
+                                          hooper_history=[])
+    assert adj.session_type == "recovery"
+    assert reason == ("You logged an injury in intervals.icu (Poor) — today's session is a "
+                      "short recovery ride."), reason
+    assert adj.description == "Recovery ride — the injury you logged in intervals.icu."
+
+
+def test_qx_m6_sore_legs_in_plain_words(today):
+    db.upsert_daily_log(DAY_ISO, NORMAL, NORMAL, TIRED, NORMAL, 4)        # soreness Sore
+    planned = tp.PlannedSession(day=DAY, day_name="", session_type="threshold",
+                                duration_min=60, tss_estimate=80, description="")
+    adj, reason = tp.adjust_today_session(planned, {"score": 90, "dfa_cap": {}},
+                                          rides_recent=[], daily_log_today=_row(),
+                                          hooper_history=[])
+    assert adj.session_type == "recovery"
+    assert reason == "Sore legs this morning — today's session is a short recovery ride."
+    assert adj.description == "Recovery ride — sore legs today."
+    for code in ("G5", "6/7", "peripheral", "Hooper", "Cheung"):
+        assert code not in reason + adj.description, code
+
+
+# ── QX-L3 / QX-L4 / QX-L13: the card's lines ─────────────────────────────────
+
+def test_qx_l4_the_api_says_when_soreness_came_from_the_injury(today):
+    _sync([_rec(fatigue=1, injury=3)])
+    d = TestClient(app_module.app).get("/api/daily-log").json()
+    assert d["icu_soreness_from_injury"] is True
+    _sync([_rec(soreness=3, injury=3)])                 # Sore answered anyway
+    d = TestClient(app_module.app).get("/api/daily-log").json()
+    assert d["icu_soreness_from_injury"] is False
+
+
+def test_qx_l13_a_riders_own_check_in_says_intervals_icus_answers_are_not_used(today):
+    db.upsert_daily_log(DAY_ISO, GOOD, GOOD, GOOD, GOOD, 4)
+    _sync([_rec(fatigue=3)])
+    d = TestClient(app_module.app).get("/api/daily-log").json()
+    assert set(d["sources"].values()) == {"manual"} and d["icu_answers_today"] is True
+
+
+def test_qx_l13_the_form_says_saving_makes_the_day_yours():
+    src = DASH.read_text(encoding="utf-8")
+    start = src.index("function showMorningForm(stored)")
+    body = src[start:src.index("\n}\n", start)]
+    assert "Saving here replaces today's answers from intervals.icu." in body
+    assert "window._todayIcuImported" in body
+    assert ">Morning check-in<" in body and "leg-check" not in body
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_qx_l3_l4_l13_the_card_lines():
+    from test_331_surfaces import _extract_js_function, _run_node
+    src = DASH.read_text(encoding="utf-8")
+    harness = ("const esc = s => String(s);\n" + _extract_js_function(src, "_morningIcuLines")
+               + """
+const a = _morningIcuLines({sources: {sleep_quality: 'manual', fatigue: 'manual',
+  stress: 'manual', soreness: 'manual'}, icu_answers_today: true,
+  icu_extras: {injury: 'None', mood: 'OK'}});
+if (!a.includes('Your answers in intervals.icu today are not used: you checked in here.')) throw new Error(a);
+if (!a.includes('injury') || a.includes('injury None')) throw new Error(a);
+if (!a.includes('mood OK · no injury')) throw new Error(a);
+const b = _morningIcuLines({sources: {sleep_quality: 'default', fatigue: 'intervals.icu',
+  stress: 'default', soreness: 'default'}, band: {mode: 'personal'}, icu_sleep_from_watch: true,
+  icu_extras: {}});
+if (!b.includes('counted as your usual answer: stress, soreness')) throw new Error(b);
+if (!b.includes('so sleep counts as your usual answer.')) throw new Error(b);
+const c = _morningIcuLines({sources: {sleep_quality: 'manual', fatigue: 'manual',
+  stress: 'manual', soreness: 'manual'}, icu_answers_today: false, icu_extras: {}});
+if (c !== '') throw new Error(c);
 console.log('OK');
 """)
     _run_node(harness)

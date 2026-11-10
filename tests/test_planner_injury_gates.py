@@ -206,11 +206,12 @@ def test_g5_soreness_6_forces_recovery():
     )
     assert adj.session_type == "recovery"
     assert adj.adapted is True
-    assert "G5" in reason
-    assert "Hooper 1995" in adj.description
-    assert "Cheung 2003" in adj.description, (
-        f"G5 description must cite Cheung 2003 (peripheral fatigue) — got: {adj.description!r}"
-    )
+    # Restated for 3.14.0 (QA QX-M6): the reason and the description are
+    # plain words for the rider now ("G5 soreness 6/7 → forced recovery
+    # (peripheral fatigue bypass)" and the citations on the card read as
+    # codes); the gate itself is unchanged. The log line keeps the numbers.
+    assert reason == "Sore legs this morning — today's session is a short recovery ride."
+    assert adj.description == "Recovery ride — sore legs today."
 
 
 # ── G6 — a check-in in the rest band forces Z2 (3.14.0 bands) ──────────────

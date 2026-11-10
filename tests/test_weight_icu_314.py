@@ -292,10 +292,11 @@ def test_the_body_card_headline_is_the_profile_weight():
 def test_the_settings_note_says_what_happens():
     from test_331_surfaces import _extract_js_function, _run_node
     src = DASH.read_text(encoding="utf-8")
-    harness = ("const esc = s => String(s);\n" + _extract_js_function(src, "_weightFollowNote")
+    harness = ("const esc = s => String(s);\n" + _extract_js_function(src, "_entryFmtDate")
+               + "\n" + _extract_js_function(src, "_weightFollowNote")
                + """
 const a = _weightFollowNote({weight_icu_latest: {date: '2026-11-08', value: 72.4}}, true);
-if (!a.includes('72.4 kg on 2026-11-08')) throw new Error(a);
+if (!a.includes('72.4 kg on 8 Nov')) throw new Error(a);   // not the ISO date (QA)
 const b = _weightFollowNote({weight_icu_latest: null}, true);
 if (!b.includes('No intervals.icu weight in the last 30 days')) throw new Error(b);
 if (_weightFollowNote({}, false) !== '') throw new Error('unticked must be quiet');
@@ -303,4 +304,88 @@ const c = _weightFollowNote({weight_needs_check: true}, false);
 if (!c.includes('linked before')) throw new Error(c);
 console.log('OK');
 """)
+    _run_node(harness)
+
+
+# ═══ Wave 4 (3.14.0 fixes) ════════════════════════════════════════════════════
+
+def test_l7_an_out_of_range_weight_is_refused_plainly_and_nothing_is_logged(rider):
+    _own(rider, 68.0, "manual")
+    for bad in (250, 29.9):
+        r = rider.client.post("/api/settings", json={"weight": bad, "ftp": 250})
+        assert r.status_code == 400, r.text
+        detail = r.json()["detail"]
+        assert detail.startswith("weight ") and "weight_kg" not in detail, detail
+    assert _athlete(rider)["weight_kg"] == 68.0
+    assert db.query_metric_history("weight", 365) == []
+
+
+def test_l7_the_seeded_70_kg_stays_suppressed_after_a_tick_without_a_reading(rider):
+    _own(rider, 70.0, None)                         # a new profile's seeded weight
+    rider.client.post("/api/settings", json={"weight_follow_icu": True})
+    assert rider.pm._athlete["weight_source"] == "icu"
+    assert app_module._sitko_advisory(300) is None, "a band from the fabricated 70 kg"
+    _sync([_rec(2, weight=70.0)])                   # a real reading of exactly 70.0
+    assert app_module._sitko_advisory(300) is not None
+    _own(rider, 70.0, "manual")                     # typed by the rider
+    assert app_module._sitko_advisory(300) is not None
+
+
+def test_l7_untick_after_a_tick_without_a_reading_types_nothing(rider):
+    _own(rider, 70.0, None)
+    rider.client.post("/api/settings", json={"weight_follow_icu": True})
+    rider.client.post("/api/settings", json={"weight_follow_icu": False})
+    a = _athlete(rider)
+    assert a["weight_kg"] == 70.0 and "weight_source" not in a, (
+        "the seeded 70 kg became a typed weight")
+    _sync([_rec(1, weight=73.0)])
+    rider.client.post("/api/settings", json={"weight_follow_icu": True})
+    rider.client.post("/api/settings", json={"weight_follow_icu": False})
+    a = _athlete(rider)
+    assert (a["weight_kg"], a["weight_source"]) == (73.0, "manual"), "a reading is the rider's"
+
+
+def test_qx_m7_an_unchanged_weight_is_not_logged_again(rider):
+    _own(rider, 75.0, "manual")
+    _sync([_rec(0, weight=73.4)])
+    r = rider.client.post("/api/settings", json={"weight": 75.0, "ftp": 260})   # an FTP change
+    assert r.status_code == 200, r.text
+    today = {x["date"]: x for x in db.query_metric_history("weight", 365)}[_iso(0)]
+    assert (today["value"], today["source"]) == (73.4, "intervals.icu"), (
+        "an unrelated save put the typed weight over today's scale reading")
+    rider.client.post("/api/settings", json={"weight": 74.0})
+    today = {x["date"]: x for x in db.query_metric_history("weight", 365)}[_iso(0)]
+    assert (today["value"], today["source"]) == (74.0, "settings"), "a changed weight is logged"
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+@pytest.mark.parametrize("source", [None, "icu"])
+def test_qx_m7_the_body_card_shows_the_one_weight(source):
+    from test_331_surfaces import _extract_js_function, _run_node
+    src = DASH.read_text(encoding="utf-8")
+    settings = json.dumps({"weight": 75.0, "weight_source": source, "w_per_kg": 3.47,
+                           "weight_icu_latest": {"date": "2026-11-10", "value": 73.4}})
+    harness = ("const esc = s => String(s);\n" + _extract_js_function(src, "_entryFmtDate") + "\n"
+               + _extract_js_function(src, "loadBodyPerf") + """
+const host = {innerHTML: ''};
+function $(id) { return host; }
+function miniSparklineSVG() { return '<svg></svg>'; }
+const window = {_diagFrontendError() {}};
+const H = {
+  '/api/metrics/history?metric=weight&days=180': [{date: '2026-11-09', value: 73.1}, {date: '2026-11-10', value: 73.4}],
+  '/api/metrics/history?metric=ftp&days=180': [{date: '2026-10-01', value: 260}],
+  '/api/metrics/history?metric=w_per_kg&days=180': [{date: '2026-11-09', value: 3.54}],
+  '/api/metrics/history?metric=vo2max&days=365': [],
+};
+async function fetch(url) { return {ok: true, json: async () => H[url]}; }
+async function getResource(url) { return {ok: true, json: async () => (%s)}; }
+loadBodyPerf().then(() => {
+  const h = host.innerHTML;
+  if (!h.includes('75.0kg')) throw new Error('headline is not the profile weight: ' + h);
+  if (!h.includes('intervals.icu: 73.4 kg (10 Nov)')) throw new Error('no reading line: ' + h);
+  if (!h.includes('>3.47<')) throw new Error('W/kg is not Settings\\' number: ' + h);
+  if (%s && !h.includes('Weight · intervals.icu')) throw new Error(h);
+  console.log('OK');
+});
+""" % (settings, "true" if source == "icu" else "false"))
     _run_node(harness)

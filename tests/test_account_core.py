@@ -103,6 +103,18 @@ def _athlete_json(home: Path, pid: str) -> dict:
         (home / ".domestique" / "profiles" / pid / "athlete.json").read_text())
 
 
+def _daily_log_count(db_file: Path) -> int:
+    if not db_file.exists():
+        return 0
+    conn = sqlite3.connect(str(db_file))
+    try:
+        return conn.execute("SELECT COUNT(*) FROM daily_log").fetchone()[0]
+    except sqlite3.OperationalError:
+        return 0
+    finally:
+        conn.close()
+
+
 # ─── A1: mid-sync switch — zero crossover ────────────────────────────────────
 
 @pytest.mark.parametrize("reset_stop_event", [False, True],
@@ -125,7 +137,10 @@ def test_a1_mid_sync_switch_aborts_wellness_write(tmp_path, monkeypatch,
             # Clear the stop flag so the gate reaches the snapshot check —
             # proves the abort does NOT depend on the stop event alone.
             db_mod.shutdown_sync()
-        return [{"id": "2026-07-01", "ctl": 10.0, "atl": 5.0, "sportInfo": []}]
+        # 3.14.0 F1 (T12): the record also carries a morning check-in, which
+        # must abort with the batch (the import runs inside the write gate).
+        return [{"id": "2026-07-01", "ctl": 10.0, "atl": 5.0, "sportInfo": [],
+                 "fatigue": 3, "soreness": 3, "weight": 72.4}]
 
     monkeypatch.setattr(db_mod, "fetch_wellness", fetch_stub)
 
@@ -135,6 +150,8 @@ def test_a1_mid_sync_switch_aborts_wellness_write(tmp_path, monkeypatch,
     profiles = tmp_path / ".domestique" / "profiles"
     assert _profile_db_counts(profiles / "alice" / "health_tracker.db")["wellness"] == 0
     assert _profile_db_counts(profiles / "bob" / "health_tracker.db")["wellness"] == 0
+    assert _daily_log_count(profiles / "alice" / "health_tracker.db") == 0
+    assert _daily_log_count(profiles / "bob" / "health_tracker.db") == 0
     # zero mirror writes in B
     assert "lthr_source" not in _athlete_json(tmp_path, "bob")
     assert "wprime_source" not in _athlete_json(tmp_path, "bob")
@@ -305,6 +322,51 @@ def test_a10_purge_wipes_and_aborts_inflight_snapshot(tmp_path):
     athlete = _athlete_json(tmp_path, "alice")
     assert "max_hr" not in athlete and "max_hr_source" not in athlete
     assert athlete["wprime_j"] == 20000 and athlete["wprime_source"] == "manual"
+
+
+def test_mt1_purge_removes_imported_check_ins_and_keeps_the_riders(tmp_path):
+    """3.14.0 grill H1: contract A4 says no residual rows. Check-ins imported
+    from intervals.icu kept feeding today's band and its baseline after a
+    disconnect, and after a reconnect as another athlete that person's
+    soreness and fatigue drove the gates. The rider's own check-ins stay."""
+    pm = _mk_pm(tmp_path)
+    a = pm.create_profile("Alice")
+    b = pm.create_profile("Bob")
+    pm.switch(a)
+    db_mod.shutdown_sync()
+    conn = db_mod.get_db()
+    conn.execute("INSERT INTO daily_log (date, sleep_quality, fatigue, soreness, "
+                 "stress, mood, hooper_index, icu_fields) "
+                 "VALUES ('2026-07-01', 4, 6, 4, 4, 4, 18, 'fatigue')")
+    conn.commit()
+    db_mod.upsert_daily_log("2026-07-02", 3, 3, 3, 3, 4)       # the rider's own
+    removed = db_mod.purge_profile_data(a)
+    assert removed["daily_log_icu"] == 1
+    rows = db_mod.get_db().execute(
+        "SELECT date, icu_fields FROM daily_log ORDER BY date").fetchall()
+    assert [(r[0], r[1]) for r in rows] == [("2026-07-02", None)]
+
+    # A profile that is not active and was never opened by 3.14.0: its
+    # database has no icu_fields column. The purge must still run through.
+    bob_db = tmp_path / ".domestique" / "profiles" / b / "health_tracker.db"
+    c = sqlite3.connect(str(bob_db))
+    c.executescript("""
+        CREATE TABLE wellness (date TEXT PRIMARY KEY, ctl REAL, atl REAL);
+        CREATE TABLE activities (id TEXT PRIMARY KEY, date TEXT);
+        CREATE TABLE sync_log (id INTEGER PRIMARY KEY, timestamp TEXT);
+        CREATE TABLE athlete_metrics (date TEXT, metric TEXT, value REAL,
+                                      source TEXT, PRIMARY KEY (date, metric));
+        CREATE TABLE daily_log (date TEXT PRIMARY KEY, sleep_quality INTEGER,
+            fatigue INTEGER, soreness INTEGER, stress INTEGER, mood INTEGER,
+            hooper_index REAL);
+        INSERT INTO wellness VALUES ('2026-07-01', 10, 5);
+        INSERT INTO daily_log VALUES ('2026-07-01', 3, 3, 3, 3, 4, 12);
+    """)
+    c.commit()
+    c.close()
+    removed_b = db_mod.purge_profile_data(b)
+    assert removed_b["wellness"] == 1 and removed_b["daily_log_icu"] == 0
+    assert _daily_log_count(bob_db) == 1
 
 
 # ─── switch: bounded gate wait, never proceed unlocked ───────────────────────

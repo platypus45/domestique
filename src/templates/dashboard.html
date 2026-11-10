@@ -734,6 +734,8 @@ input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:18px; h
 }
 /* #34: "moved" on a Plan-tab card, as on Home's This-week card. */
 .card-moved { color: #60a5fa; font-style: italic; }
+/* 3.14.0: a ride the rider added themselves */
+.card-own { color: var(--accent, #a78bfa); font-style: italic; }
 .cal-day .cal-planned-meta {
   font-size: 8px; color: var(--text2); margin-top: 1px;
 }
@@ -2848,6 +2850,8 @@ window.addEventListener('unhandledrejection', function(e) {
       <div class="cal-tab" id="cal-tab-grid" data-view="grid" onclick="calSwitchView('grid')">Grid</div>
       <button class="cal-jump-btn" onclick="calJumpToToday()">Jump to today</button>
       <button class="cal-jump-btn" onclick="openScheduleFtpTest()" title="Put an FTP test on a day of your choice — the plan re-fits around it">Schedule FTP test</button>
+      <button class="cal-jump-btn" onclick="openOwnRideDialog()" title="Put a ride of your own on a day, such as a group ride: the rest of the week is planned around it">Add your own ride</button>
+      <button class="cal-jump-btn" onclick="openIcuPlannedRides()" title="Pick rides you planned in your intervals.icu calendar to put in your plan">My rides from intervals.icu</button>
     </div>
     <div id="cal-body" class="cal-scroll">
       <div class="cal-week-grid">
@@ -12774,6 +12778,108 @@ function icuRacesApply() {
   return {goal: goal, added: added, later: later};
 }
 
+// ═══ 3.14.0: my rides from intervals.icu ═══════════════════════════════════
+// The rider's own planned rides in their intervals.icu calendar (read-only):
+// tick the ones to put in the plan. A ride moved or deleted there since is
+// shown with buttons; nothing follows silently, and nothing changes there.
+const _OWN_IMPORT_STATUS = {
+  added: 'In your plan', after_plan: 'After your plan ends', not_in_plan: 'Not in your plan',
+  race_day: 'Race day', ridden: 'Already ridden', two_sessions: 'Two sessions that day',
+};
+let _icuPlanned = null;
+async function openIcuPlannedRides() {
+  let r;
+  try { r = await (await fetch('/api/icu/planned-rides')).json(); } catch (e) { r = {error: 'network'}; }
+  if (r && r.needs_reconnect) {
+    showToast('Reconnect intervals.icu to read your calendar (Settings → Connections).', 6000, 'warning');
+    return;
+  }
+  if (!r || r.error || !Array.isArray(r.rides)) {
+    showToast(r && r.error === 'not_connected'
+      ? 'Connect intervals.icu first (Settings → Connections).'
+      : "Couldn't read your intervals.icu calendar — try again in a moment.", 6000, 'error');
+    return;
+  }
+  if (!r.rides.length && !(r.gone || []).length) {
+    showToast('No rides of your own planned in your intervals.icu calendar from today on.', 5000, 'info');
+    return;
+  }
+  _icuPlanned = r;
+  openModal(_icuPlannedHtml(r));
+}
+function _icuPlannedHtml(r) {
+  const row = (x, i) => {
+    const len = x.duration_min ? `${Math.floor(x.duration_min / 60)}:${String(x.duration_min % 60).padStart(2, '0')}`
+      : `<input type="number" class="own-imp-len" data-i="${i}" min="15" max="600" style="width:60px" placeholder="min" aria-label="Length in minutes">`;
+    let act;
+    if (x.status === 'new' || x.status === 'day_has_your_ride') {
+      act = `<label><input type="checkbox" class="own-imp-pick" data-i="${i}"> Add</label>` +
+        (x.status === 'day_has_your_ride' ? '<div style="font-size:11px;color:var(--text3);">That day holds a ride you added: this links it to this one.</div>' : '');
+    } else if (x.status === 'moved') {
+      act = `<div style="font-size:11px;">Moved in intervals.icu: your plan has it on ${esc(_ownDayLabel(x.plan_day))}.</div>
+        <button class="btn btn-sm btn-primary" onclick="icuPlannedFollow(${i})">Move it in my plan too</button>
+        <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept on ${esc(_ownDayLabel(x.plan_day))}'">Keep my day</button>`;
+    } else {
+      act = `<span style="color:var(--text3);">${esc(_OWN_IMPORT_STATUS[x.status] || x.status)}</span>`;
+    }
+    return `<tr><td>${esc(_ownDayLabel(x.date))}</td><td>${esc(x.name || '(no name)')}</td><td>${len}</td>` +
+      `<td>${x.load != null ? esc(x.load) : ''}</td>` +
+      `<td>${(x.status === 'new' || x.status === 'day_has_your_ride') ? _ownIntensitySelect('own-imp-int-' + i, x.intensity) : esc(OWN_INTENSITY_LABEL[x.intensity] || '')}</td>` +
+      `<td>${act}</td></tr>`;
+  };
+  const gone = (r.gone || []).map((g, k) => `<tr><td>${esc(_ownDayLabel(g.date))}</td><td>${esc(g.name || '')}</td>
+      <td colspan="3" style="color:var(--text3);">No longer in your intervals.icu calendar</td>
+      <td><button class="btn btn-sm" onclick="icuPlannedRemoveGone(${k})">Remove from my plan</button>
+      <button class="btn btn-sm" onclick="this.parentElement.textContent='Kept'">Keep</button></td></tr>`).join('');
+  return `<h2 style="margin-top:0;">My rides from intervals.icu</h2>
+    <div style="font-size:12px;color:var(--text2);margin-bottom:8px;">Your own rides planned in intervals.icu. Tick the ones to put in your plan: the rest of the week is planned around them. Nothing changes in intervals.icu.</div>
+    <table style="width:100%;font-size:12px;border-collapse:collapse;">
+      <tr style="text-align:left;color:var(--text3);"><th>Date</th><th>Ride</th><th>Length</th><th>Load</th><th>How hard</th><th></th></tr>
+      ${(r.rides || []).map(row).join('')}${gone}
+    </table>
+    <div id="own-imp-status" role="status" aria-live="polite" style="font-size:12px;color:var(--red);margin-top:10px;"></div>
+    <div style="margin-top:10px;display:flex;gap:6px;">
+      <button class="btn btn-primary" onclick="icuPlannedAdd()">Add selected</button>
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`;
+}
+function _icuPlannedItems() {
+  const r = _icuPlanned || {rides: []};
+  const items = [];
+  document.querySelectorAll('.own-imp-pick').forEach(function (cb) {
+    if (!cb.checked) return;
+    const i = +cb.dataset.i, x = r.rides[i];
+    if (!x) return;
+    const lenEl = document.querySelector(`.own-imp-len[data-i="${i}"]`);
+    const item = {date: x.date, name: x.name, icu_event_id: x.event_id, icu_day: x.date,
+                  duration_min: x.duration_min || (lenEl ? parseInt(lenEl.value, 10) || 0 : 0),
+                  intensity: (document.getElementById('own-imp-int-' + i) || {}).value || x.intensity};
+    if (x.load != null) { item.load = x.load; item.load_from = x.load_from; }
+    if (x.status === 'day_has_your_ride') item.link = true;
+    items.push(item);
+  });
+  return items;
+}
+async function icuPlannedAdd() {
+  const items = _icuPlannedItems();
+  const statusEl = document.getElementById('own-imp-status');
+  if (!items.length) { if (statusEl) statusEl.textContent = 'Tick at least one ride.'; return; }
+  await _ownPost({profile_id: (_icuPlanned || {}).profile_id, set: items}, statusEl);
+}
+async function icuPlannedFollow(i) {
+  const x = ((_icuPlanned || {}).rides || [])[i];
+  if (!x) return;
+  await _ownPost({profile_id: (_icuPlanned || {}).profile_id,
+                  move: [{from: x.plan_day, to: x.date, icu_day: x.date}]},
+                 document.getElementById('own-imp-status'));
+}
+async function icuPlannedRemoveGone(k) {
+  const g = ((_icuPlanned || {}).gone || [])[k];
+  if (!g) return;
+  await _ownPost({profile_id: (_icuPlanned || {}).profile_id, remove: [g.date]},
+                 document.getElementById('own-imp-status'));
+}
+
 // ═══ v2.3.0: template intensity-mix % readout + custom split ════════════════
 // Typical % shown when a Template preset is picked (display only — the realized
 // mix is computed from the generated plan and replaces this after Generate).
@@ -13803,6 +13909,8 @@ const CAL_SESSION_LABEL = {
   tempo: 'TEMPO', sweetspot: 'SWEET SPOT', threshold: 'THRESHOLD',
   vo2max: 'VO2MAX', overunder: 'OVER/UNDER', sprint: 'SPRINTS', ftp_test: 'FTP TEST',
 };
+// 3.14.0: how hard the rider said their own ride is.
+const OWN_INTENSITY_LABEL = {easy: 'easy', moderate: 'moderate', hard: 'hard'};
 const CAL_SESSION_CSS = {
   rest: 'wc-rest-type', recovery: 'wc-z2', z2: 'wc-z2', long_z2: 'wc-long',
   tempo: 'wc-z2', sweetspot: 'wc-hit', threshold: 'wc-hit',
@@ -13827,6 +13935,8 @@ function calCardTitle(planned) {
   // icon (rendered by the cell builder) still flags session_type vs content
   // disagreement — that's a UX feature, not a bug.
   if (!planned) return '';
+  // 3.14.0: a ride the rider added has no workout file by design: its name.
+  if (planned.own) return planned.own.name || 'Your ride';
   // v2.2.12 — strip the file's own embedded "Nmin" from the title so it can't
   // contradict the slot-duration badge rendered beside it (a 45min sprint slot
   // matched to a 57min file showed "Neuromuscular 57min …" next to a "45m"
@@ -13873,6 +13983,7 @@ function calStructureSuffix(planned) {
 
 // v4.5.1 FIX-UI variety — title with structure suffix (used in cell labels).
 function calCardTitleWithStructure(planned) {
+  if (planned && planned.own) return calCardTitle(planned);   // 3.14.0: the rider's own name
   const base = calCardTitle(planned);
   const suf = calStructureSuffix(planned);
   return suf ? `${base} · ${suf}` : base;
@@ -13916,7 +14027,11 @@ function plannedCardParts(planned, cardState) {
   const moved = planned.user_moved
     ? ' · <span class="card-moved" title="You moved this workout. It keeps its length when that day\'s hours change.">moved</span>'
     : '';
-  const metaText = `${dur}${planned.tss ? ' · ' + Math.round(planned.tss) + ' TSS' : ''}${moved}`;
+  // 3.14.0: the rider's own ride says so, and how hard they said it is.
+  const own = planned.own
+    ? ` · <span class="card-own" title="Your own ride: the rest of the week is planned around it.">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</span>`
+    : '';
+  const metaText = `${dur}${planned.tss ? ' · ' + Math.round(planned.tss) + ' TSS' : ''}${moved}${own}`;
   const warn = cardState === 'missing_workout'
     ? '<span class="cal-planned-warn" title="Workout missing — click ⟳ to assign one.">⚠</span>'
     : '';
@@ -14804,7 +14919,11 @@ async function calOpenDay(dateStr) {
   // each activity (details) are reachable — never silently open only the ride.
   const _secRides = Array.isArray(day.actual_secondary) ? day.actual_secondary : [];
   const _rides = [day.actual].concat(_secRides).filter(Boolean);
-  const _hasWorkout = !!(day.planned && day.planned.session_type && day.planned.session_type !== 'rest');
+  // 3.14.0: the rider's own ride is not a workout to open: a ridden one opens
+  // the ride, an unridden one its own dialog (edit / remove).
+  const _isOwn = !!(day.planned && day.planned.own);
+  if (_isOwn && !_rides.length) { openOwnRideDialog(dateStr); return; }
+  const _hasWorkout = !_isOwn && !!(day.planned && day.planned.session_type && day.planned.session_type !== 'rest');
   if (_rides.length && (_hasWorkout || _rides.length >= 2)) {
     try { _calOpenDayChooser(day, _secRides, _hasWorkout); return; } catch (_) {}
   }
@@ -14993,12 +15112,14 @@ function calDragStart(e, srcDay, srcWeekIdx) {
     const isCompleted = c.getAttribute('data-cal-completed') === '1';
     const isMissing = c.getAttribute('data-cal-missing') === '1';
     const isUnavailable = c.getAttribute('data-cs') === 'future_unavailable';
+    // 3.14.0: a day holding the rider's own ride takes no drop (it is fixed).
+    const isOwn = c.getAttribute('data-cs') === 'own';
     const cellMonday = _calIsoMonday(day);
     const sameWeek = cellMonday && (cellMonday === srcMonday);
     // A day that has passed is a record, not a slot (the move endpoint
     // refuses it too).
     const isPast = day < new Date().toLocaleDateString('en-CA');
-    if (sameWeek && !isRest && !isCompleted && !isMissing && !isUnavailable && !isPast) {
+    if (sameWeek && !isRest && !isCompleted && !isMissing && !isUnavailable && !isOwn && !isPast) {
       c.classList.add('cal-dropping-valid');
     } else {
       c.classList.add('cal-dropping-invalid');
@@ -15211,6 +15332,7 @@ function renderThisWeekFromCalendar(data) {
         <div class="wc-type ${cssCls}" style="font-size:10px;padding:1px 3px;">${esc(title)}</div>
         <div class="wc-meta">${planned.duration_min ? Math.round(planned.duration_min) + 'm' : ''}${planned.tss ? ' · ' + Math.round(planned.tss) + 'T' : ''} ${warn}</div>
         ${planned.user_moved ? '<div class="wc-meta" style="color:#60a5fa;font-style:italic;">moved</div>' : ''}
+        ${planned.own ? `<div class="wc-meta card-own" style="font-style:italic;">your ride · ${esc(OWN_INTENSITY_LABEL[planned.own.intensity] || '')}</div>` : ''}
       </div>`;
     } else if (cs === 'rest' && !actual) {
       // v4.5.1 FIX-UI B2 — only show REST when there's no actual ride. If user
@@ -17946,6 +18068,22 @@ async function loadTodaySession() {
       el.onclick = () => openTodayRich();
       return;
     }
+    // 3.14.0: today is the rider's own ride: theirs, never an adjusted
+    // prescription (no readiness Accept on it); a low-readiness day adds a
+    // plain line. Click opens its own dialog.
+    if (d.own) {
+      const o = d.own, p = d.planned || {};
+      const mins = Math.round(p.duration_min || 0);
+      el.innerHTML =
+        `<div style="font-size:12px;font-weight:700;letter-spacing:0.05em;color:var(--text2);margin-bottom:4px;">YOUR RIDE</div>
+         <div style="font-size:18px;font-weight:800;margin-bottom:4px;">${esc(o.name || 'Your ride')}</div>
+         <div style="font-size:12px;color:var(--text2);">${mins ? Math.floor(mins / 60) + 'h' + String(mins % 60).padStart(2, '0') : ''}${p.tss_estimate ? ' · ' + Math.round(p.tss_estimate) + ' TSS' : ''} · ${esc(OWN_INTENSITY_LABEL[o.intensity] || '')}</div>
+         ${d.own_advisory ? `<div style="font-size:12px;color:var(--yellow);margin-top:8px;">${esc(d.own_advisory)}</div>` : ''}
+         <div style="font-size:11px;color:var(--text3);margin-top:8px;">The rest of your week is planned around it.</div>`;
+      el.style.cursor = 'pointer';
+      el.onclick = () => openOwnRideDialog(_calTodayStr());
+      return;
+    }
     const adj = d.adjusted || d.planned;
     const mod = d.was_modified;
     // v4.6.0 IMPL-HOMEPAGE-CONSISTENCY §3 Pillar D: hero shows the ORIGINAL
@@ -18427,6 +18565,140 @@ async function scheduleFtpTestSubmit(proto) {
   } catch (e) {
     if (statusEl) statusEl.textContent = 'Could not schedule: ' + e.message;
   }
+}
+
+// ═══ 3.14.0: the rider's own rides (a group ride, a ride of their own) ══════
+// One dialog adds, edits, moves and removes a ride; the server fits the week
+// around it (POST /api/plan/own-sessions) and says what changed. A pushed ride
+// the rider moved in intervals.icu is shown here with two buttons; nothing
+// follows silently.
+function _ownDayLabel(iso) {
+  return new Date(iso + 'T12:00:00').toLocaleDateString('en-GB', {weekday: 'short', day: 'numeric', month: 'short'});
+}
+function _ownCalDay(iso) {
+  const data = window._calData || {};
+  for (const w of data.weeks || []) for (const d of w.days || []) if (d.date === iso) return d;
+  return null;
+}
+function _ownResultText(j) {
+  // The server's own plain lines: what was eased, moved, refused or is worth a word.
+  const lines = [];
+  (j.eased || []).forEach(e => e.text && lines.push(e.text));
+  (j.restored || []).forEach(e => e.text && lines.push(e.text));
+  (j.ftp_test_moved || []).forEach(e => e.text && lines.push(e.text));
+  (j.warnings || []).forEach(w => w.text && lines.push(w.text));
+  (j.refused || []).forEach(r => lines.push(`${r.date ? _ownDayLabel(String(r.date).slice(0, 10)) + ': ' : ''}${r.text || r.reason}`));
+  return lines;
+}
+async function _ownPost(body, statusEl) {
+  let res, j;
+  try {
+    res = await fetch('/api/plan/own-sessions', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                                                body: JSON.stringify(body)});
+    j = await res.json();
+  } catch (e) {
+    if (statusEl) statusEl.textContent = 'Could not save: ' + e.message;
+    return null;
+  }
+  if (res.status === 409 && j && j.error === 'profile_changed') {
+    if (statusEl) statusEl.textContent = 'The active rider changed. Open this again.';
+    return null;
+  }
+  const lines = _ownResultText(j || {});
+  if (!res.ok || !j || !j.ok) {
+    if (statusEl) statusEl.textContent = lines.join(' ') || (j && (j.error || j.detail)) || ('Could not save (HTTP ' + res.status + ')');
+    return null;
+  }
+  closeModal();
+  try { showToast(['Saved.'].concat(lines).join(' '), lines.length ? 9000 : 3500, lines.length ? 'warning' : 'success'); } catch (_) {}
+  try { await loadCalendar(); } catch (_) {}
+  try { if (typeof loadTodaySession === 'function') await loadTodaySession(); } catch (_) {}
+  return j;
+}
+function _ownIntensitySelect(id, val) {
+  const o = (v, t) => `<option value="${v}"${val === v ? ' selected' : ''}>${t}</option>`;
+  return `<select id="${id}" aria-label="How hard">${o('easy', 'Easy')}${o('moderate', 'Moderate')}${o('hard', 'Hard')}</select>`;
+}
+async function openOwnRideDialog(dateStr) {
+  const today = _calTodayStr();
+  if (dateStr && !_ownCalDay(dateStr) && typeof loadCalendar === 'function') {
+    try { await loadCalendar(); } catch (_) {}   // opened from Home: read the plan first
+  }
+  const day = dateStr ? _ownCalDay(dateStr) : null;
+  const own = day && day.planned && day.planned.own ? day.planned.own : null;
+  const p = own ? day.planned : null;
+  const iso = dateStr && dateStr >= today ? dateStr : today;
+  const dur = p ? Math.round(p.duration_min || 0) : 120;
+  const loadTyped = own && (own.load_from === 'typed' || own.load_from === 'icu') ? Math.round(p.tss || 0) : '';
+  window._ownDlg = {orig: own ? dateStr : null, own: own};
+  let sync = {};
+  try { sync = await (await fetch('/api/icu/push')).json(); } catch (_) {}
+  const weeks = Math.max(2, Math.round((sync.horizon_days || 14) / 7));
+  let where;
+  if (own && own.source === 'icu') where = 'This ride comes from your intervals.icu calendar; nothing changes there.';
+  else if (sync.sync_enabled) where = `With calendar sync on, this ride is sent to your intervals.icu calendar once it is within the next ${weeks} weeks.`;
+  else where = 'Calendar sync is off, so this ride stays in Domestique.';
+  // O4: the rider moved this pushed ride in intervals.icu; ask, never follow.
+  const moved = own && own.source !== 'icu'
+    ? (sync.own_moved || []).find(m => m && m.day === dateStr) : null;
+  const movedHtml = moved ? `<div class="own-moved" style="border:1px solid var(--yellow);border-radius:8px;padding:10px;margin-bottom:12px;font-size:12px;">
+      You moved this ride in intervals.icu to <b>${esc(_ownDayLabel(moved.icu_day))}</b>. Your plan still has it on ${esc(_ownDayLabel(dateStr))}.
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-primary" onclick="ownRideFollowMove('${esc(dateStr)}','${esc(moved.icu_day)}')">Move it in my plan too</button>
+        <button class="btn btn-sm" onclick="ownRidePutBack('${esc(dateStr)}','${esc(moved.icu_day)}')">Put it back on ${esc(_ownDayLabel(dateStr))}</button>
+      </div></div>` : '';
+  const hint = own ? '' : `<div style="font-size:11px;color:var(--text3);margin-top:6px;">Already planned this ride in intervals.icu? Use <b>My rides from intervals.icu</b> instead, so it is not there twice.</div>`;
+  openModal(`<h2 style="margin-top:0;">${own ? 'Your ride' : 'Add your own ride'}</h2>
+    ${movedHtml}
+    <div style="display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;font-size:13px;">
+      <label for="own-date">Day</label><input type="date" id="own-date" min="${today}" value="${esc(iso)}">
+      <label for="own-name">Name</label><input type="text" id="own-name" maxlength="80" placeholder="Saturday club ride" value="${esc(own ? own.name || '' : '')}">
+      <label for="own-h">Length</label><span><input type="number" id="own-h" min="0" max="10" style="width:60px" value="${Math.floor(dur / 60)}" aria-label="Hours"> h
+        <input type="number" id="own-m" min="0" max="59" style="width:60px" value="${dur % 60}" aria-label="Minutes"> min</span>
+      <label for="own-int">How hard</label>${_ownIntensitySelect('own-int', own ? own.intensity : 'moderate')}
+      <label for="own-load">Load</label><span><input type="number" id="own-load" min="1" max="1000" style="width:80px" value="${loadTyped}"> <span style="font-size:11px;color:var(--text3);">TSS, if you know it</span></span>
+    </div>
+    <div style="font-size:12px;color:var(--text2);margin-top:12px;">The rest of the week is planned around this ride: easy rides get shorter to keep the week's load, and a hard session next to a hard ride is made easy (from tomorrow on).</div>
+    <div style="font-size:12px;color:var(--text2);margin-top:6px;">${esc(where)}</div>
+    ${hint}
+    <div id="own-status" role="status" aria-live="polite" style="font-size:12px;color:var(--red);margin-top:10px;"></div>
+    <div style="margin-top:12px;display:flex;gap:6px;">
+      <button class="btn btn-primary" onclick="ownRideSave()">Save</button>
+      ${own ? `<button class="btn" onclick="ownRideRemove('${esc(dateStr)}')">Remove</button>` : ''}
+      <button class="btn" onclick="closeModal()">Cancel</button>
+    </div>`);
+}
+function _ownFormItem() {
+  const g = id => (document.getElementById(id) || {}).value;
+  const item = {name: (g('own-name') || '').trim(),
+                duration_min: (parseInt(g('own-h'), 10) || 0) * 60 + (parseInt(g('own-m'), 10) || 0),
+                intensity: g('own-int')};
+  const load = parseFloat(g('own-load'));
+  if (load > 0) item.load = Math.round(load);
+  return item;
+}
+async function ownRideSave() {
+  const st = window._ownDlg || {};
+  const statusEl = document.getElementById('own-status');
+  const to = (document.getElementById('own-date') || {}).value;
+  if (!to) { if (statusEl) statusEl.textContent = 'Pick a day.'; return; }
+  const item = _ownFormItem();
+  let body;
+  if (st.orig && st.orig !== to) body = {move: [Object.assign({from: st.orig, to: to}, item)]};
+  else body = {set: [Object.assign({date: to}, item)]};
+  if (statusEl) statusEl.textContent = 'Saving…';
+  await _ownPost(body, statusEl);
+}
+async function ownRideRemove(iso) {
+  await _ownPost({remove: [iso]}, document.getElementById('own-status'));
+}
+async function ownRideFollowMove(fromIso, toIso) {
+  // O4 "Move it in my plan too": the plan follows the rider's move.
+  await _ownPost({move: [{from: fromIso, to: toIso}]}, document.getElementById('own-status'));
+}
+async function ownRidePutBack(dayIso, icuIso) {
+  // O4 "Put it back": the next calendar run returns the ride to its plan day.
+  await _ownPost({put_back: [{day: dayIso, icu_day: icuIso}]}, document.getElementById('own-status'));
 }
 
 // hr target_mode — LTHR field-test instructions (20-min TT protocol). No
@@ -19135,7 +19407,8 @@ async function openDayWorkout(sessionIdx, day) {
   // using the session's OWN date (no picker). O3: hidden when the slot has no
   // matched ZWO (nothing to attach). name is display-only for the planner branch
   // (the endpoint rebuilds the title from the plan) — passed for symmetry.
-  const _calBtn = session.zwo_file
+  // 3.14.0 (C6): never on the rider's own ride (the calendar sync sends it).
+  const _calBtn = (session.zwo_file && !session.own)
     ? `<button class="btn" onclick="calPushPlanner('${escJs(session.zwo_file)}','${escJs(session.day)}','${escJs(fitName)}', this)" title="Send this planned session to your intervals.icu calendar">📅 Send to intervals.icu calendar</button><span class="info-icon" data-popover="calpush-info" tabindex="0" role="button" aria-label="Why send to intervals.icu?" title="What sending to intervals.icu does">?</span>`
     : '';
   html += (_hrLead ? (_fitBtn + _zwoBtn) : (_zwoBtn + _fitBtn)) + _calBtn;

@@ -65,7 +65,7 @@ GoldenCheetah is 500K+ lines of C++ — can't import. But **pycycling** (Python,
 - `config.py` — loaded per-profile (each profile overrides athlete metrics)
 - `db.py` — per-profile SQLite database OR profile_id column on all tables
 
-**UI**: Profile avatar/icon in header → dropdown with "Martijn" / "Partner" / "Add profile"
+**UI**: Profile avatar/icon in header → dropdown with "Rider" / "Partner" / "Add profile"
 
 ---
 
@@ -99,7 +99,7 @@ GoldenCheetah is 500K+ lines of C++ — can't import. But **pycycling** (Python,
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│ TRAINING  Martijn ▼  [▶ PAUSE]  [■ STOP]  [+5%][−5%]  ⏱ 47:23│
+│ TRAINING  Profile ▼  [▶ PAUSE]  [■ STOP]  [+5%][−5%]  ⏱ 47:23│
 │                                     INT 2/5 · 3:42 remaining   │
 ├────────────────────────┬────────────────────────────────────────┤
 │                        │                                        │

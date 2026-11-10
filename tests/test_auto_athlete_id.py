@@ -115,7 +115,7 @@ class TestSetupSaveAutoDetect(_SetupSaveBase):
              patch.object(
                  training_module,
                  "discover_athlete_id",
-                 return_value={"id": "i225278", "name": "Haringo"},
+                 return_value={"id": "i225278", "name": "Test Rider"},
              ):
 
             def _fake_save_env(athlete_id, api_key):
@@ -131,7 +131,7 @@ class TestSetupSaveAutoDetect(_SetupSaveBase):
             payload = resp.json()
             self.assertTrue(payload.get("ok"))
             self.assertEqual(payload.get("athlete_id_detected"), "i225278")
-            self.assertEqual(payload.get("athlete_name"), "Haringo")
+            self.assertEqual(payload.get("athlete_name"), "Test Rider")
             self.assertNotIn("warning", payload)
 
         # save_env was called with the auto-detected ID, not "" or None.
@@ -147,7 +147,7 @@ class TestSetupSaveAutoDetect(_SetupSaveBase):
              patch.object(
                  training_module,
                  "discover_athlete_id",
-                 return_value={"id": "i225278", "name": "Haringo"},
+                 return_value={"id": "i225278", "name": "Test Rider"},
              ):
 
             def _fake_save_env(athlete_id, api_key):
@@ -175,7 +175,7 @@ class TestSetupSaveAutoDetect(_SetupSaveBase):
              patch.object(
                  training_module,
                  "discover_athlete_id",
-                 return_value={"id": "i225278", "name": "Haringo"},
+                 return_value={"id": "i225278", "name": "Test Rider"},
              ):
 
             def _fake_save_env(athlete_id, api_key):

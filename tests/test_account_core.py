@@ -412,7 +412,7 @@ def _seed_profile(base: Path, pid: str, act_ids=(), wellness_rows=()):
 
 
 def _seed_global_archives(base: Path):
-    """Global legacy archive: 4 icu files (2 martijn / 1 rider / 1 unmatched),
+    """Global legacy archive: 4 icu files (2 sam / 1 rider / 1 unmatched),
     a .last_sync_at dotfile, 3 wellness files (1 each + 1 unmatched), and a
     loose FIT + sidecar (unmatched)."""
     icu = base / "rides" / "icu"
@@ -440,15 +440,15 @@ def _seed_global_archives(base: Path):
 def _mk_migration_base(tmp_path: Path, multi: bool = True) -> Path:
     base = tmp_path / ".domestique"
     base.mkdir(parents=True)
-    _seed_profile(base, "martijn", act_ids=("m1", "m2"),
+    _seed_profile(base, "sam", act_ids=("m1", "m2"),
                   wellness_rows=[("2026-06-01", 20.777937, 17.746977)])
-    profiles = [{"id": "martijn", "name": "Martijn"}]
+    profiles = [{"id": "sam", "name": "Sam"}]
     if multi:
         _seed_profile(base, "rider", act_ids=("r1",),
                       wellness_rows=[("2026-06-02", 30.5, 25.25)])
         profiles.append({"id": "rider", "name": "Rider"})
     (base / "profiles.json").write_text(json.dumps({
-        "version": 1, "active_profile": "martijn", "skip_picker": True,
+        "version": 1, "active_profile": "sam", "skip_picker": True,
         "profiles": profiles,
     }), encoding="utf-8")
     _seed_global_archives(base)
@@ -476,7 +476,7 @@ def test_a11_migration_db_id_attribution_multi_profile(tmp_path):
     # unmatched: x1.json + 2026-06-03.json + ride_x.fit + its sidecar
     assert stats["unmatched"] == 4
 
-    m = base / "profiles" / "martijn"
+    m = base / "profiles" / "sam"
     r = base / "profiles" / "rider"
     # DB-id attribution — matched files land with their OWNER, active or not
     assert (m / "rides" / "icu" / "m1.json").exists()
@@ -497,7 +497,7 @@ def test_a11_migration_db_id_attribution_multi_profile(tmp_path):
     assert (base / "rides" / "MIGRATION_NOTE.txt").exists()
     reg = json.loads((base / "profiles.json").read_text())
     assert reg["archive_migration"]["banner"] is True
-    assert reg["archive_migration"]["assigned_to"] == "martijn"
+    assert reg["archive_migration"]["assigned_to"] == "sam"
     assert reg["archive_migration"]["unmatched"] == 4
 
     # idempotent: second run is a no-op
@@ -509,7 +509,7 @@ def test_a11_migration_single_profile_no_banner(tmp_path):
     base = _mk_migration_base(tmp_path, multi=False)
     stats = migrate_profiles.migrate_archives_to_profiles(base)
     assert stats["ran"] is True
-    m = base / "profiles" / "martijn"
+    m = base / "profiles" / "sam"
     # everything (matched + unmatched + r1 now unmatched) → the sole profile
     for name in ("m1.json", "m2.json", "r1.json", "x1.json"):
         assert (m / "rides" / "icu" / name).exists()

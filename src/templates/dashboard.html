@@ -2422,8 +2422,9 @@ window.addEventListener('unhandledrejection', function(e) {
              automatically after each ride sync and on every plan-tab open
              (runPlanOpenSequence → /api/plan/update). -->
         <button class="btn btn-primary" onclick="generatePlan()" id="btn-generate-plan" title="Create your plan — or rebuild it from your current settings + fitness. After that it updates itself automatically after each ride sync and whenever you open this tab.">Generate Plan</button>
-        <!-- v3.0.1 IP_ICU_PUSH: mirror the next 14 days onto the intervals.icu
-             calendar (Garmin/MyWhoosh pull workouts from there). States set by
+        <!-- v3.0.1 IP_ICU_PUSH: mirror the rider's window (2, 4 or 6 weeks,
+             3.14.0) onto the intervals.icu calendar (Garmin/MyWhoosh pull
+             workouts from there). States set by
              icuPushRefreshButton(): hidden (not connected) / normal / spinner
              while running / "Reconnect…" linking to the Settings connection
              card when the OAuth grant lacks CALENDAR:WRITE. -->
@@ -3348,14 +3349,30 @@ window.addEventListener('unhandledrejection', function(e) {
           <input type="checkbox" id="icu-cal-sync-toggle" onchange="icuCalSyncToggle(this)">
           <span>Keep intervals.icu calendar in sync</span>
         </label>
+        <!-- 3.14.0 F3: how many weeks of the plan the sync keeps there. -->
+        <div class="wl-row" style="margin:8px 0 0;">
+          <div class="wl-main">
+            <label class="wl-title" for="icu-cal-window" style="display:block;">Weeks ahead in intervals.icu</label>
+            <div class="wl-sub">How much of your plan Domestique keeps in your intervals.icu calendar. Workouts further ahead can still change as your plan adapts. Only weeks your plan already holds are sent.</div>
+          </div>
+          <div class="wl-actions">
+            <select id="icu-cal-window" onchange="icuCalWindowSet(this)">
+              <option value="14">2 weeks</option>
+              <option value="28">4 weeks</option>
+              <option value="42">6 weeks</option>
+            </select>
+          </div>
+        </div>
+        <div id="icu-cal-window-status" class="wl-sub" role="status" aria-live="polite"></div>
         <div id="icu-cal-sync-held" style="display:none;font-size:12px;color:var(--text2);margin-top:6px;"></div>
         <div id="icu-cal-sync-hint" style="font-size:11px;color:var(--text3);margin-top:4px;">
-          Mirrors your next 14 days of planned workouts to your intervals.icu
-          calendar after every plan change (Garmin &amp; MyWhoosh pull workouts
-          from there). Turning this off removes the workouts Domestique pushed;
+          Mirrors your planned workouts, and your own rides added in Domestique,
+          to your intervals.icu calendar for the weeks chosen above, after every
+          plan change (Garmin &amp; MyWhoosh pull workouts from there). Turning
+          this off removes what Domestique put there, your own rides included;
           anything else on your calendar is never touched — workouts you added
-          yourself stay put (even on the same day). Sync from one Domestique
-          install per athlete.
+          in intervals.icu stay put (even on the same day). Sync from one
+          Domestique install per athlete.
         </div>
       </div>
     </div>
@@ -16890,9 +16907,10 @@ async function icuPushRefreshButton() {
       btn.onclick = openSettingsConnections;
       btn.title = 'Your intervals.icu sign-in predates calendar permission — reconnect once (Settings → Connections) to grant it.';
     } else {
+      const weeks = Math.round((s.horizon_days || 14) / 7);
       btn.textContent = 'Push to intervals.icu calendar';
       btn.onclick = icuPushNow;
-      btn.title = 'Send the next 14 days of planned workouts to your intervals.icu calendar. Garmin & MyWhoosh pull workouts from there. Your own calendar entries are never touched.';
+      btn.title = `Send the next ${weeks} weeks of your plan to your intervals.icu calendar. Garmin & MyWhoosh pull workouts from there. Your own calendar entries are never touched.`;
     }
   } catch (_) { btn.style.display = 'none'; }
 }
@@ -16917,6 +16935,15 @@ function icuPushToastFromResult(r, verb) {
   if (r.error === 'busy') {
     // #28: another calendar update held the lock — nothing failed.
     showToast('A calendar update is already running — try again in a moment.', 6000, 'warning');
+    return;
+  }
+  // 3.14.0: answers that are not a connection problem get their own words.
+  if (r.error === 'no_plan') {
+    showToast('There is no plan to send to intervals.icu yet.', 5000, 'warning');
+    return;
+  }
+  if (r.error === 'profile_changed') {
+    showToast('Another profile is active now — nothing was changed in intervals.icu.', 6000, 'warning');
     return;
   }
   if (r.error) {
@@ -16967,6 +16994,8 @@ async function icuCalSyncRefresh() {
     blk.style.display = 'block';
     cb.checked = !!s.sync_enabled;
     cb.disabled = !s.write_ok && !s.sync_enabled;
+    const win = $('icu-cal-window');                     // 3.14.0 F3
+    if (win) win.value = String(s.horizon_days || 14);
     if (hint && !s.write_ok) {
       hint.innerHTML = 'Reconnect intervals.icu (button above) to grant calendar permission, then enable sync.';
     }
@@ -16998,7 +17027,9 @@ async function icuCalSyncToggle(cb) {
         cb.checked = false;
         showToast('Could not enable calendar sync.', 4000, 'error');
       } else {
-        showToast('Calendar sync on — plan changes now mirror to intervals.icu (next 14 days).', 5000, 'success');
+        const win = $('icu-cal-window');
+        const weeks = Math.round(parseInt((win && win.value) || '14', 10) / 7);
+        showToast(`Calendar sync on — plan changes now mirror to intervals.icu (next ${weeks} weeks).`, 5000, 'success');
       }
     } else {
       icuPushToastFromResult(r, 'Calendar sync off — cleanup');
@@ -17010,6 +17041,47 @@ async function icuCalSyncToggle(cb) {
     cb.disabled = false;
     icuCalSyncRefresh();
   }
+}
+
+// 3.14.0 F3: the status line under "Weeks ahead in intervals.icu" for the
+// answer of POST /api/icu/push {horizon_days}. horizon_days in the answer
+// means the choice was saved; with sync on, the calendar update ran too.
+function icuCalWindowNote(r) {
+  if (!r || !r.horizon_days) {
+    return (r && r.error === 'no_active_profile') ? 'Choose a profile first.' : 'Could not save — try again.';
+  }
+  const weeks = Math.round(r.horizon_days / 7);
+  if (!r.sync_enabled) return `Saved. Push to intervals.icu calendar now sends ${weeks} weeks.`;
+  if (r.needs_reconnect) return 'Saved. intervals.icu needs a quick reconnect to allow calendar writes (button above).';
+  if (!r.error) return 'Saved.';
+  if (r.error === 'swept' || r.error === 'sync_off' || r.error === 'profile_changed') return 'Saved.';
+  if (r.error === 'no_plan') return 'Saved. There is no plan to send yet.';
+  if (r.error === 'busy') return 'Saved. Another calendar update was running; your calendar catches up at its next update.';
+  if (r.error === 'not_connected') return 'Saved. Connect intervals.icu to send your plan.';
+  return 'Saved. intervals.icu could not be reached just now; your calendar catches up at its next update.';
+}
+
+async function icuCalWindowSet(sel) {
+  const st = $('icu-cal-window-status');
+  sel.disabled = true;
+  if (st) { st.style.color = ''; st.textContent = 'Saving…'; }
+  let r;
+  try {
+    r = await (await fetch('/api/icu/push', { method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ horizon_days: parseInt(sel.value, 10) }) })).json();
+  } catch (e) { r = null; }
+  if (st) {
+    st.textContent = icuCalWindowNote(r);
+    st.style.color = (r && r.horizon_days) ? '' : 'var(--red)';
+  }
+  // Saved with sync on and the update went through: the usual push toast.
+  if (r && r.horizon_days && r.sync_enabled && !r.error && !r.needs_reconnect) {
+    icuPushToastFromResult(r, 'Pushed to intervals.icu');
+  }
+  sel.disabled = false;
+  icuCalSyncRefresh();
+  icuPushRefreshButton();
 }
 
 // AC3b: "Switch account" = disconnect FIRST (server clears the token and purges

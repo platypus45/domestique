@@ -7852,10 +7852,16 @@ def api_icu_disconnect():
         # left to delete with. Failures never block the disconnect.
         try:
             import icu_calendar_push as _icp
-            _icp.sweep_all()
+            _icp.sweep_all(profile_id=pid)      # 3.14.0 (M2): this rider only
         except Exception:
             _log.debug("icu disconnect calendar sweep failed (best-effort)",
                        exc_info=True)
+        # 3.14.0 (grill M2): the sweep can wait two minutes for a running
+        # calendar update; after a profile switch meanwhile, purging and
+        # clearing the token would hit the other rider.
+        if pm.active_id != pid:
+            return JSONResponse({"ok": False, "error": "profile_changed"},
+                                status_code=409)
         try:
             db.purge_profile_data(pid)
         except db.SyncBusy:
@@ -7992,9 +7998,11 @@ def _icu_push_debounced_run(expected_pid: str, retried: int = 0) -> None:
             _log.info("EVENT=icu_push_debounced_abort reason=profile_switch")
             return
         import icu_calendar_push
-        res = icu_calendar_push.reconcile()
-        if res.get("error") == "swept":         # sync went off while it waited
-            return
+        # 3.14.0 (grill M2): bound to the rider who armed it — the lock wait
+        # can outlast a profile switch, or that rider turning sync off.
+        res = icu_calendar_push.reconcile(profile_id=expected_pid, require_sync=True)
+        if res.get("error") in ("swept", "profile_changed", "sync_off"):
+            return                              # nothing ran for this rider
         _icu_push_note_result(res)
         # 3.3.1 hotfix (B3b): this line omitted `error` entirely — the
         # tester's swap-triggered 422 failed with a clean-looking log line.
@@ -8079,9 +8087,10 @@ def _after_background_sync() -> None:
 
 def _icu_push_daily_from_sync() -> None:
     """db.post_sync_callback (boot-registered): ONE reconcile per calendar
-    day, riding the 30-min sync loop (D3b). This is what rolls the 14-day
-    horizon forward on mutation-free days and mirrors boot-time plan writes
-    — the atomic_write_plan hook is deliberately registered AFTER those."""
+    day, riding the 30-min sync loop (D3b). This is what rolls the rider's
+    window (2, 4 or 6 weeks, 3.14.0) forward on mutation-free days and
+    mirrors boot-time plan writes — the atomic_write_plan hook is
+    deliberately registered AFTER those."""
     global _icu_push_last_daily
     try:
         if not _icu_push_sync_enabled():
@@ -8123,20 +8132,27 @@ def api_icu_push_status():
     except Exception:
         _wok = False
     sync_enabled = False
+    horizon_days = _icp.HORIZON_DAYS
     try:
-        sync_enabled = bool(ProfileManager.get().prefs.get("icu_calendar_sync"))
+        _pm = ProfileManager.get()
+        sync_enabled = bool(_pm.prefs.get("icu_calendar_sync"))
+        horizon_days = _icp.profile_horizon_days(_pm.active_id)   # 3.14.0 F3
     except Exception:
         pass
+    last = _last_result_for_active_profile()
     return {
         "connected": bool(token or key),
         "method": "oauth" if token else ("apikey" if key else "none"),
         "write_ok": _wok,
         "sync_enabled": sync_enabled,
-        "horizon_days": 14,
+        "horizon_days": horizon_days,
+        # 3.14.0 (O4): own rides whose event the rider moved in intervals.icu,
+        # as the last calendar update saw them: [{day, icu_day}].
+        "own_moved": list((last or {}).get("own_moved") or []),
         # 3.3.1 hotfix (B3b): outcome of the most recent reconcile (any
         # trigger), incl. error + error_detail — background pushes are no
         # longer silent to the UI.
-        "last_result": _last_result_for_active_profile(),
+        "last_result": last,
     }
 
 
@@ -8145,16 +8161,42 @@ def api_icu_push(body: "dict | None" = None):
     """No body / {} → run the reconcile NOW (the plan-tab button).
     {"sync": true|false} → flip the keep-in-sync toggle; OFF runs the final
     forward sweep (G-A) so our events leave the athlete's calendar.
+    {"horizon_days": 14|28|42} → 3.14.0 F3: save the rider's window; with
+    sync on, the calendar follows now (a shorter window removes what is
+    beyond it). The answer carries ``horizon_days`` once saved; ``ok`` is
+    the calendar update's outcome. Errors: bad_horizon / no_active_profile
+    (nothing saved), profile_changed / sync_off / swept (saved, no update).
     Always 200 with a result dict — needs_reconnect/error are data, not 500s
     (G4)."""
     import icu_calendar_push as _icp
     from profile_manager import ProfileManager
     body = body or {}
     try:
+        if "horizon_days" in body:
+            pm = ProfileManager.get()
+            pid = pm.active_id
+            if pid is None:
+                return {"ok": False, "error": "no_active_profile"}
+            n = body.get("horizon_days")
+            if isinstance(n, bool) or not isinstance(n, int) or n not in _icp.HORIZON_CHOICES:
+                return {"ok": False, "error": "bad_horizon"}
+            pm.save_prefs({_icp._HORIZON_PREF: n})
+            out = {"ok": True, "horizon_days": n,
+                   "sync_enabled": _icu_push_sync_enabled(),
+                   **_icp._result(), "held": 0, "learned": [], "own_moved": []}
+            if out["sync_enabled"]:
+                # Grill M2: bound to this rider and to sync still being on
+                # once the lock is free; a sweep while it waits ends it too.
+                res = _icp.reconcile(profile_id=pid, require_sync=True)
+                if res.get("error") not in ("swept", "profile_changed", "sync_off"):
+                    _icu_push_note_result(res)
+                out.update(res, ok=not res.get("error") and not res.get("needs_reconnect"))
+            return out
         if "sync" in body:
             enable = bool(body.get("sync"))
             pm = ProfileManager.get()
-            if pm.active_id is None:
+            pid = pm.active_id
+            if pid is None:
                 return {"ok": False, "error": "no_active_profile"}
             if enable:
                 if not _icp.write_ok(pm):
@@ -8165,7 +8207,7 @@ def api_icu_push(body: "dict | None" = None):
                 return {"ok": True, "sync_enabled": True}
             pm.save_prefs({"icu_calendar_sync": False})
             _icu_push_cancel_pending()      # a pending debounce would re-push
-            res = _icp.sweep_all()          # G-A: final forward sweep
+            res = _icp.sweep_all(profile_id=pid)   # G-A: final forward sweep (M2)
             return {"ok": True, "sync_enabled": False, **res}
         res = _icp.reconcile(abort_if_swept=False)
         _icu_push_note_result(res)          # 3.3.1 hotfix (B3b): status parity
@@ -8192,7 +8234,8 @@ def api_calendar_push_workout(body: "dict | None" = None):
         push the ONE matching event, inheriting the EXACT domestique:<pid>:<day>:<n>
         auto-sync would produce (byte-identical → merges, no duplicate). Never a
         client index or a hand-rolled <n> (grill amendment 2). O1: the horizon is
-        extended to cover a target day beyond the 14-day auto-sync window.
+        extended to cover a target day beyond the rider's auto-sync window. A
+        day holding the rider's own ride is refused (own_ride_day, 3.14.0).
 
     #28: a planned session the rider moved in intervals.icu is not pushed —
     {ok, pushed: 0, kept_on: <the day it is on there>} — and the planner push
@@ -8306,10 +8349,16 @@ def api_calendar_push_workout(body: "dict | None" = None):
             plan = _icp._load_plan()
             if plan is None:
                 return {"error": "no_plan"}
-            # O1: extend the horizon so a day beyond the 14-day auto-sync window
-            # is still buildable. _desired_events assigns the exact <n>, so the
-            # selected event is byte-identical to what auto-sync would push.
-            horizon = max(_icp.HORIZON_DAYS, (target - today).days)
+            # 3.14.0 (C6): an own ride's day has no workout to send (the
+            # button is hidden there); its ride follows the calendar sync.
+            if any(s.get("own") for s in _icp._sessions_by_day(plan).get(date_iso) or []):
+                return {"error": "own_ride_day"}
+            # O1: extend the horizon so a day beyond the rider's auto-sync
+            # window is still buildable. _desired_events assigns the exact <n>,
+            # so the selected event is byte-identical to what auto-sync would
+            # push. F3 (grill L3): and read as far as the rider's own reconcile
+            # does, a pending clean-up included, so the same holds are seen.
+            horizon = _icp.send_window_days(profile_id, today, target)
             desired, skipped, _ = _icp._desired_events(
                 pm, plan, today, horizon, profile_id)
             # Match on (day, filename): filename is the ZWO name (power) or
@@ -8320,7 +8369,7 @@ def api_calendar_push_workout(body: "dict | None" = None):
             event = next(
                 (ev for ev in desired
                  if ev["start_date_local"][:10] == date_iso
-                 and ev["filename"] == want), None)
+                 and ev.get("filename") == want), None)
             if event is None:
                 # Defense (the frontend hides the button per O3): a slot with no
                 # ZWO / dismissed / skipped isn't pushable. Surface needs_lthr if
@@ -8344,7 +8393,12 @@ def api_calendar_push_workout(body: "dict | None" = None):
                 _log.info("EVENT=icu_calendar_push_workout source=planner "
                           "date=%s pushed=0 kept_on=%s", date_iso, kept_on)
                 return {"ok": True, "pushed": 0, "kept_on": kept_on}
-            return _send([event])
+            out = _send([event])
+            if out.get("ok"):
+                # 3.14.0 (grill H1): past the rider's window, a clean-up still
+                # pending from a longer one must spare this push.
+                _icp.note_sent(profile_id, event["external_id"], target)
+            return out
 
         return _icp._one_at_a_time(_icp._RECONCILE_LOCK_TIMEOUT_S, _push_planned)
     except Exception as e:                      # amendment 7: zero 500s, ever

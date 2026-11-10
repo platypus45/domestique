@@ -1407,6 +1407,11 @@ def _reconcile(horizon_days: "int | None", want_profile: "str | None" = None,
              and any(_own(s) is not None and not _own_is_imported(_own(s))
                      for s in by_day.get(enc) or [])),
             key=lambda m: m["day"])
+        # 3.14.0 F2 (C9): plan days whose workout the rider moved in
+        # intervals.icu and the plan has not followed; the own-ride writer
+        # never eases those (app._icu_held_plan_days reads this).
+        result["held_days"] = sorted({enc for eid, (enc, _n, _ev) in held.items()
+                                      if eid not in learned_ids})
         if held:
             stand_ins = _stand_ins(held, by_day, profile_id, names)
             desired = [ev for ev in desired

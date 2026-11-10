@@ -7447,7 +7447,7 @@ async function loadReadinessComposite() {
     } else if (sev === 'tier_down') {
       actionHtml = `
         <div style="margin-top:10px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <button class="btn btn-primary" id="apply-tier-down-btn" onclick="applyReadinessTierDown()" style="font-size:11px;padding:5px 12px;">⇣ Ease today's session</button>
+          ${window._todayIsOwn ? '' : `<button class="btn btn-primary" id="apply-tier-down-btn" onclick="applyReadinessTierDown()" style="font-size:11px;padding:5px 12px;">⇣ Ease today's session</button>`}
           <button class="btn" id="apply-week-tier-down-btn" onclick="applyWeekAutoAdjust()" style="font-size:11px;padding:5px 12px;">Auto-adjust this week</button>
         </div>
         <div id="apply-tier-down-status" style="font-size:11px;color:var(--text2);margin-top:6px;"></div>

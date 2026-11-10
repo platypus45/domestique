@@ -7968,6 +7968,21 @@ def _icu_push_note_result(res: dict) -> None:
         _icu_push_last_result = {"at": clock.now().isoformat(), **res, "profile_id": _pid}
     except Exception:
         pass
+    # 3.14.0 F2 (O4): a put-back that has done its job is cleared right after
+    # the run, so a later drag back to that date is asked about again. Only
+    # for the rider whose plan is on disk now.
+    try:
+        from profile_manager import ProfileManager
+        if (res.get("own_moved") is not None and not res.get("error")
+                and _icu_push_last_result.get("profile_id") == ProfileManager.get().active_id):
+            jp = _plan_dir() / "current_plan.json"
+            if jp.exists():
+                with tp.plan_write_lock():
+                    plan = json.loads(jp.read_text(encoding="utf-8"))
+                    if tp.clear_done_put_backs(plan, res["own_moved"], _icu_push_last_result["at"]):
+                        tp.atomic_write_plan(jp, plan)
+    except Exception:
+        _log.exception("put-back clean-up skipped")
 
 
 def _last_result_for_active_profile() -> "dict | None":

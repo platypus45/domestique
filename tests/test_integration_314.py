@@ -449,7 +449,7 @@ def test_i1_an_edit_reaches_the_same_event_and_a_removal_brings_the_workout_back
     _own(env, set=[_ride(30, intensity="hard")])
     _push(env)
     first = _event(env, _own_id(env, 30))["id"]
-    _own(env, set=[_ride(30, minutes=150, intensity="hard")])
+    _own(env, set=[dict(_ride(30, minutes=150, intensity="hard"), edit=True)])
     r = _push(env)
     ev = _event(env, _own_id(env, 30))
     assert (ev["id"], ev["moving_time"]) == (first, 150 * 60) and r["updated"] >= 1

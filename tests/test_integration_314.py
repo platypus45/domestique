@@ -625,9 +625,6 @@ def test_o4_put_it_back_redates_the_ride_and_a_later_drag_is_asked_about_again(e
     assert _status(env)["own_moved"] == [{"day": D(10), "icu_day": D(11)}]
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "QA-INT P1: a put-back is cleared by a run that did not re-date the ride "
-    "(own POST rejected; a failed run before the next own-ride save)"))
 @pytest.mark.parametrize("how", ["own_post_rejected", "failed_run_then_another_ride"])
 def test_qa_p1_put_it_back_survives_a_run_that_did_not_put_the_ride_back(env, freeze_clock, how):
     """The rider clicked "Put it back"; the next run did not re-date the
@@ -653,9 +650,6 @@ def test_qa_p1_put_it_back_survives_a_run_that_did_not_put_the_ride_back(env, fr
     assert env.fk.where(_own_id(env, 10)) == [D(10)], "the rider's Put it back was dropped"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "QA-INT S1: an earlier ride's lasting moved_from makes 'Move it in my plan "
-    "too' keep the old event held: the ride twice on its new day"))
 def test_qa_s1_following_a_second_ride_from_a_day_an_earlier_ride_left_leaves_one_event(env):
     """Ride 1 was moved in Domestique from day 30 to day 31 (long done: its
     old event is gone). Later ride 2 is added on day 30, the rider drags it
@@ -681,9 +675,6 @@ def test_qa_s1_following_a_second_ride_from_a_day_an_earlier_ride_left_leaves_on
     assert on_33 == [_own_id(env, 33)], f"the evening spin twice on {D(33)}: {on_33}"
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "QA-INT S2: a ride removed while its event is held stays in intervals.icu, "
-    "held for good and no longer reported to the rider"))
 def test_qa_s2_a_ride_removed_while_its_event_is_held_is_not_left_behind_unmentioned(env):
     """The rider dragged their pushed ride in intervals.icu, then removed the
     ride in Domestique. Its event must not stay in intervals.icu with
@@ -827,9 +818,6 @@ def test_c9_a_workout_moved_in_intervals_icu_is_never_eased_by_a_hard_own_ride(e
     _assert_mirror(env, DEFAULT, moved={_eid(env, 2): D(1)})
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "QA-INT C9b: held_days live only in the last calendar result; a failed run "
-    "or the other rider's run erases them, so the move is eased and pulled back"))
 @pytest.mark.parametrize("then", ["a_failed_run", "the_other_riders_run"])
 def test_qa_c9b_a_later_run_that_did_not_see_the_calendar_keeps_the_move_pinned(env, then):
     """Nothing changed in intervals.icu since the run that saw the move: a

@@ -98,16 +98,27 @@ def test_readiness_is_not_folded_into_the_min(monkeypatch):
 
 
 def test_hooper_min_semantics_preserved_within_its_own_group(monkeypatch):
-    """One bad Hooper item still dominates the other three (Hooper's intent)."""
+    """One bad Hooper item still dominates the other three (Hooper's intent).
+
+    Restated for 3.14.0 (grill_wellness M8, owner: an ordinary day is
+    neutral): a check-in with no answer worse than Normal now has NO Hooper
+    term — it used to score higher than one bad answer, now it is absent and
+    the channel is omitted. The one bad answer still sets the channel alone.
+    """
     monkeypatch.setattr(app_module.db, "get_daily_log_today",
                         lambda: {"soreness": 1, "fatigue": 1, "stress": 1,
                                  "sleep_quality": 7})
     one_bad = app_module._get_soreness_subjective()
     monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                        lambda: {"soreness": 1, "fatigue": 1, "stress": 7,
+                                 "sleep_quality": 7})
+    two_bad = app_module._get_soreness_subjective()
+    monkeypatch.setattr(app_module.db, "get_daily_log_today",
                         lambda: {"soreness": 1, "fatigue": 1, "stress": 1,
                                  "sleep_quality": 1})
     all_good = app_module._get_soreness_subjective()
-    assert one_bad < all_good
+    assert one_bad is not None and one_bad == two_bad, "min(): the worst answer decides"
+    assert all_good is None, "an all-good day has no Hooper term (it was 10/10)"
 
 
 def test_one_optional_tap_cannot_cancel_the_worst_hooper_answer(monkeypatch):
@@ -138,14 +149,19 @@ def test_one_optional_tap_cannot_cancel_the_worst_hooper_answer(monkeypatch):
 
 
 def test_hooper_stays_the_dominant_term(monkeypatch):
-    """Bounded influence, both directions."""
+    """Bounded influence, both directions.
+
+    Restated for 3.14.0 (grill_wellness M8): the base was an all-Normal day,
+    which now has no Hooper term at all (absent, not 5.5/10), so the case
+    uses one answer worse than Normal ("Sore", stored 6) to keep a Hooper
+    term for the rating to move."""
     for rtt, direction in ((1, -1), (10, 1)):
         monkeypatch.setattr(app_module.db, "get_daily_log_today",
-                            lambda: {"soreness": 4, "fatigue": 4, "stress": 4,
+                            lambda: {"soreness": 6, "fatigue": 4, "stress": 4,
                                      "sleep_quality": 4})
         base = app_module._get_soreness_subjective()
         monkeypatch.setattr(app_module.db, "get_daily_log_today",
-                            lambda r=rtt: {"soreness": 4, "fatigue": 4,
+                            lambda r=rtt: {"soreness": 6, "fatigue": 4,
                                            "stress": 4, "sleep_quality": 4,
                                            "readiness_to_train": r})
         moved = app_module._get_soreness_subjective()
@@ -158,9 +174,12 @@ def test_the_rating_is_asymmetric_because_the_evidence_is(monkeypatch):
     the upward direction has no such support and one direct contradiction
     (Sansone 2023 — better wellness produced HIGHER effort because riders did
     more work). So a low rating pulls at full weight and a high one nudges."""
+    # Restated for 3.14.0 (grill_wellness M8): an all-Normal day has no Hooper
+    # term now, and the rating alone is pulled to neutral symmetrically, so
+    # the asymmetry is shown on a day with a Hooper term (one answer at 5).
     def _s(rtt):
         monkeypatch.setattr(app_module.db, "get_daily_log_today",
-                            lambda: {"soreness": 4, "fatigue": 4, "stress": 4,
+                            lambda: {"soreness": 5, "fatigue": 4, "stress": 4,
                                      "sleep_quality": 4,
                                      **({"readiness_to_train": rtt}
                                         if rtt is not None else {})})
@@ -180,6 +199,11 @@ def test_the_documented_bound_holds_across_every_hooper_answer(monkeypatch):
             monkeypatch.setattr(app_module.db, "get_daily_log_today",
                                 lambda l=log: l)
             base = app_module._get_soreness_subjective()
+            if base is None:
+                # 3.14.0 (grill_wellness M8): no answer worse than Normal is
+                # no Hooper term, so there is no base for the rating to move
+                # (the rating-only path is pinned in the neutral test below).
+                continue
             for r in range(1, 11):
                 monkeypatch.setattr(
                     app_module.db, "get_daily_log_today",
@@ -225,6 +249,29 @@ def test_readiness_alone_still_produces_a_channel_but_pulled_to_neutral(monkeypa
     assert 5.5 < _s(7) < 7.0          # moved up from neutral, not all the way
     assert 1.0 < _s(1) < 5.5          # and down, likewise
     assert _s(10) > _s(1)
+
+
+def test_a_check_in_no_worse_than_normal_has_no_hooper_term(monkeypatch):
+    """3.14.0 neutral rule (grill_wellness M8): "Normal" read as 5.5/10, which
+    is 50/100 on the composite, under its 60 line, so answering Normal
+    lowered an ordinary rider's readiness. With a rating, the rating-only
+    path (pulled to neutral) carries the channel; without one, it is absent."""
+    import readiness_composite as rc
+    n = rc.HOOPER_NORMAL_ANSWER
+    for log in ({"soreness": n, "fatigue": n, "stress": n, "sleep_quality": n},
+                {"soreness": 1, "fatigue": 3, "stress": n, "sleep_quality": 3}):
+        monkeypatch.setattr(app_module.db, "get_daily_log_today", lambda l=log: l)
+        assert app_module._get_soreness_subjective() is None
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda l=log: {**l, "readiness_to_train": 7})
+        alone = app_module._get_soreness_subjective()
+        monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                            lambda: {"readiness_to_train": 7})
+        assert alone == app_module._get_soreness_subjective()
+    monkeypatch.setattr(app_module.db, "get_daily_log_today",
+                        lambda: {"soreness": n + 1, "fatigue": n, "stress": n,
+                                 "sleep_quality": n})
+    assert app_module._get_soreness_subjective() is not None
 
 
 def test_no_input_returns_none(monkeypatch):

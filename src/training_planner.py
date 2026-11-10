@@ -11045,8 +11045,15 @@ def _place_opener(weeks: list, d, library) -> None:
 
 def _space_hard_days_across_plan(weeks: list, library: list | None = None,
                                  plan_start_date=None,
-                                 seed_salt: int = 0) -> list[str]:
+                                 seed_salt: int = 0, *,
+                                 pinned_days=(), keep_days=()) -> list[str]:
     """48 h between hard days, applied to the FINAL plan.
+
+    Next to a hard ride the rider added (3.14.0 F2), it eases only what the
+    own-ride writer would ease (QA M1): never today (O6), never a swapped day
+    or a day the rider moved in intervals.icu (``pinned_days``, C9), never an
+    FTP test (O7), never a day the caller keeps as it is (``keep_days``: the
+    refit's frozen days).
 
     Deliberately the last thing that touches a week, and the reason is worth
     recording. This rule was first enforced inside sample_week_workouts, where
@@ -11081,7 +11088,16 @@ def _space_hard_days_across_plan(weeks: list, library: list | None = None,
     own_hard = {s.day for s in sessions
                 if getattr(s, "own", None) and _session_is_hit(s)
                 and getattr(s, "status", "pending") not in ("missed", "dismissed")}
-    last_hard = None
+    _today = clock.today()
+    _pinned = {str(x)[:10] for x in (pinned_days or ())}
+    _keep = set(keep_days or ())
+
+    def _writer_may_ease(s) -> bool:
+        return (s.day > _today and not getattr(s, "user_swapped", False)
+                and s.day.isoformat() not in _pinned and s.day not in _keep
+                and s.session_type != "ftp_test")
+
+    last_hard, last_own = None, False
     for s in sessions:
         if s.session_type == "rest" or not _session_is_hit(s):
             continue
@@ -11095,14 +11111,18 @@ def _space_hard_days_across_plan(weeks: list, library: list | None = None,
         if (getattr(s, "user_moved", False) or _status != "pending"
                 or _protect_race(s)):
             last_hard = s.day          # ridden, or the rider owns it
+            last_own = bool(getattr(s, "own", None))
             continue
-        if ((last_hard is not None and (s.day - last_hard).days < 2)
-                or any(0 < (d - s.day).days < 2 for d in own_hard)):
+        back = last_hard is not None and (s.day - last_hard).days < 2
+        if back and last_own and not _writer_may_ease(s):
+            back = False               # after an own ride: the writer's scope
+        fwd = _writer_may_ease(s) and any(0 < (d - s.day).days < 2 for d in own_hard)
+        if back or fwd:
             was = _ease_hard_session(s, library, "48 h from the previous hard day",
                                      plan_start_date=plan_start_date, seed_salt=seed_salt)
             changed.append(f"{s.day}: {was} -> {_ease_for_recovery(was)}")
         else:
-            last_hard = s.day
+            last_hard, last_own = s.day, False
     return changed
 
 
@@ -13477,7 +13497,7 @@ _OWN_REFUSALS = {
     "no_own_ride": "There is no ride of yours on that day.",
     "not_pushed": ("This ride comes from your intervals.icu calendar: move it there, "
                    "or move it in your plan."),
-    "ftp_test_day": ("Your FTP test is on that day and the next week has no rested day "
+    "ftp_test_day": ("Your FTP test is on that day and the next 7 days have no rested day "
                      "to move it to. Move the test first."),
 }
 
@@ -13487,9 +13507,28 @@ def _own_day_label(d) -> str:
     return f"{d:%a} {d.day} {d:%b}"
 
 
+def _own_len(minutes) -> str:
+    """A length as the rider reads it: "30 min", "2 h", "1 h 44"."""
+    h, m = divmod(int(minutes or 0), 60)
+    return f"{h} h {m:02d}" if h and m else (f"{h} h" if h else f"{m} min")
+
+
+def _finite(v) -> "float | None":
+    """A finite number from a JSON value, else None (QA L3: Infinity and NaN
+    parse as JSON numbers; a bool is not a number)."""
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        f = float(v)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                        moves=(), put_back=(), carry=(), today: "date | None" = None,
-                       pinned_days=(), library: "list | None" = None) -> dict:
+                       pinned_days=(), library: "list | None" = None,
+                       atomic: bool = True) -> dict:
     """3.14.0 F2 -- the one writer of rides the rider adds themselves.
 
     Mutates ``plan_dict`` in place and returns what it did. Actions, in this
@@ -13532,20 +13571,44 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
         past day). None: a ride on the test day is refused, a ride the day
         before it is kept with a warning.
     Never touches today's session for a reason other than the rider's own
-    change to today. Returns {applied, refused, eased, restored,
-    ftp_test_moved, over_budget, warnings, touched_days}; every refusal and
-    warning carries a plain ``text``."""
+    change to today. A day that already holds another of the rider's rides is
+    refused (``day_has_your_ride``) unless the item says ``edit`` (the dialog
+    of that ride) or ``replace`` (the rider confirmed), QA H1. ``atomic``
+    (every request): any refusal leaves the plan exactly as it was (QA L1/L2/
+    L3); the carry into a new plan is not atomic. Returns {applied, refused,
+    eased, restored, shortened, lengthened, ftp_test_moved, over_budget,
+    warnings, touched_days}; every refusal and warning carries a plain
+    ``text``."""
     today = today or clock.today()
     try:
         goal = goal_from_dict(plan_dict.get("goal") or {})
     except Exception:  # noqa: BLE001 -- the caps read only phase and day hours
         goal = Goal(goal_type="general", hours_per_week=8.0)
-    weeks = _plan_dict_to_planned_weeks(plan_dict)
+    # Each week with the dict index of each session it read, so the write-back
+    # lands on the exact row (a day can hold two: QA L1).
+    weeks, _src = [], []
+    for _w in plan_dict.get("weeks") or []:
+        if not isinstance(_w, dict):
+            continue
+        try:
+            _pw = week_from_dict(_w)
+        except (KeyError, ValueError, TypeError):
+            continue
+        _idx = []
+        for _k, _sj in enumerate(_w.get("sessions") or []):
+            try:
+                session_from_dict(_sj)
+                _idx.append(_k)
+            except (KeyError, TypeError, ValueError, AttributeError):
+                pass
+        if len(_idx) == len(_pw.sessions):
+            weeks.append(_pw)
+            _src.append((_w, _idx))
+    _before = [[session_to_dict(x) for x in _pw.sessions] for _pw in weeks]
     pinned = {str(d)[:10] for d in (pinned_days or ())}
     out: dict = {"applied": [], "refused": [], "eased": [], "restored": [],
-                 "ftp_test_moved": [], "over_budget": {}, "warnings": [],
-                 "touched_days": []}
-    touched: set = set()
+                 "shortened": [], "lengthened": [], "ftp_test_moved": [],
+                 "over_budget": {}, "warnings": [], "touched_days": []}
     _lib: list = [library]
 
     def lib() -> list:
@@ -13579,11 +13642,19 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
     def put(d, s) -> None:
         pw, i = pos[d][0]
         pw.sessions[i] = s
-        touched.add(d.isoformat())
 
     def refuse(day, reason) -> None:
-        out["refused"].append({"date": str(day), "reason": reason,
-                               "text": _OWN_REFUSALS.get(reason, reason)})
+        entry = {"date": str(day), "reason": reason,
+                 "text": _OWN_REFUSALS.get(reason, reason)}
+        if reason == "day_has_your_ride":
+            # Name the ride that is there, so the rider can choose (QA H1).
+            d0 = _day(day)
+            there = row(d0) if d0 is not None else None
+            name = ((getattr(there, "own", None) or {}).get("name") or "a ride of yours")
+            entry["name"] = name
+            entry["text"] = (f"There is already {name} on {_own_day_label(d0)}."
+                             if d0 is not None else entry["text"])
+        out["refused"].append(entry)
 
     def warn(code, day, text) -> None:
         out["warnings"].append({"code": code, "day": str(day), "text": text})
@@ -13597,7 +13668,10 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 and not getattr(s, "dismissed_at", ""))
 
     def owed(pw) -> float:
-        return sum(float(s.tss_estimate or 0) for s in pw.sessions if counts(s))
+        # A race's load is not the week's training budget (the volume ceiling's
+        # rule), so it never makes room nor counts as "over" (QX-M10).
+        return sum(float(s.tss_estimate or 0) for s in pw.sessions
+                   if counts(s) and not getattr(s, "is_race", False))
 
     def is_hard(s) -> bool:
         return counts(s) and _session_is_hit(s)
@@ -13660,14 +13734,14 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
         snap["for"] = for_day.isoformat()
         snap["eased_to"] = [s.session_type, s.duration_min]
         s.own_eased_from = snap
-        touched.add(s.day.isoformat())
         out["eased"].append({
             "day": s.day.isoformat(), "was": was, "now": s.session_type,
             "for": for_day.isoformat(),
             "text": f"{_own_day_label(s.day)}: your {words(was)} is now an easy ride ({why})."})
 
     # ── the day an own ride may go on ──
-    def check_day(d, eid=None, link=False, moving_from=None, ov=None):
+    def check_day(d, eid=None, link=False, moving_from=None, ov=None,
+                  edit=False, replace=False):
         if d < today:
             return "past"
         hits = pos.get(d) or []
@@ -13682,11 +13756,13 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             return "ridden"
         if getattr(s, "own", None) and d != moving_from:
             there = s.own.get("icu_event_id")
-            if eid is None or eid == there:
+            if (eid is not None and eid == there) or (edit and eid is None):
                 return None                      # an edit of the ride on that day
-            if link and there is None:
+            if link and eid is not None and there is None:
                 return None                      # M8: a manual ride becomes the icu ride
-            return "day_has_your_ride"
+            if replace:
+                return None                      # QA H1: the rider said replace it
+            return "day_has_your_ride"           # never silent (QA H1, QX-H4)
         return None
 
     def parse(item, d=None):
@@ -13697,26 +13773,18 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             except ValueError:
                 return None, "bad_date"
         name = " ".join(str(item.get("name") or "").split())[:OWN_NAME_MAX] or "Your ride"
-        raw_dur = item.get("duration_min")
-        if isinstance(raw_dur, bool):
+        dur = _finite(item.get("duration_min"))       # QA L3: finite numbers only
+        if dur is None:
             return None, "bad_length"
-        try:
-            dur = int(round(float(raw_dur)))
-        except (TypeError, ValueError):
-            return None, "bad_length"
+        dur = int(round(dur))
         if not OWN_MIN_MIN <= dur <= OWN_MAX_MIN:
             return None, "bad_length"
         load = item.get("load")
         if load in (None, ""):
             load = None
         else:
-            if isinstance(load, bool):
-                return None, "bad_load"
-            try:
-                load = float(load)
-            except (TypeError, ValueError):
-                return None, "bad_load"
-            if not (1 <= load <= OWN_MAX_LOAD):
+            load = _finite(load)
+            if load is None or not (1 <= load <= OWN_MAX_LOAD):
                 return None, "bad_load"
             load = int(round(load))
         intensity = item.get("intensity")
@@ -13730,12 +13798,10 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
         if eid in (None, ""):
             eid = None
         else:
-            if isinstance(eid, bool):
+            eid = _finite(eid)
+            if eid is None or eid != int(eid):
                 return None, "bad_event"
-            try:
-                eid = int(eid)
-            except (TypeError, ValueError):
-                return None, "bad_event"
+            eid = int(eid)
         icu_day = None
         if item.get("icu_day"):
             try:
@@ -13862,7 +13928,6 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 if (m.get("eased_to") != [s.session_type, s.duration_min]
                         or status(s) != "pending" or getattr(s, "own", None)):
                     del s.own_eased_from                       # the day changed since
-                    touched.add(s.day.isoformat())
                     continue
                 if _session_is_hit(m):
                     if _slot_breaks_hard_spacing(pw, weeks, s.day):
@@ -13875,7 +13940,6 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                     if k in m:
                         setattr(s, k, m[k])
                 del s.own_eased_from
-                touched.add(s.day.isoformat())
                 out["restored"].append({
                     "day": s.day.isoformat(), "type": s.session_type,
                     "text": f"{_own_day_label(s.day)}: your {words(s.session_type)} is back."})
@@ -13887,6 +13951,8 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             s = row(nb)
             if s is None or not is_hard(s) or status(s) != "pending" or nb < today:
                 continue
+            if len(pos.get(nb) or []) > 1:
+                continue                      # a two-session day is left as it is (QA L1)
             if getattr(s, "own", None):
                 warn("hard_rides_back_to_back", nb,
                      f"Your rides on {_own_day_label(min(d, nb))} and "
@@ -13921,7 +13987,8 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 return
             victims = [s for s in hard if status(s) == "pending" and s.day > today
                        and not _protect_race(s) and not pinned_row(s)
-                       and s.session_type != "ftp_test"]
+                       and s.session_type != "ftp_test"
+                       and len(pos.get(s.day) or []) == 1]
             if not victims:
                 warn("week_hard_cap", d,
                      f"The week of your ride on {dname} now holds {len(hard)} hard days, "
@@ -14000,7 +14067,7 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             if c2 is None:
                 warn("ftp_test_kept", nxt_day,
                      f"Your FTP test on {_own_day_label(nxt_day)} is the day after this ride, "
-                     f"and the next week has no rested day to move it to. Keep this ride easy, "
+                     f"and the next 7 days have no rested day to move it to. Keep this ride easy, "
                      f"or move the test.")
             else:
                 move_test(nxt_day, c2)
@@ -14020,19 +14087,42 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
                 continue
             after = owed(pw)
             delta = after - b
+            lens = {id(x): x.duration_min for x in pw.sessions}
             if delta > 0 and after > budget:
-                t, freed = _make_room(pw, today, min(after - budget, delta), keep, refit_file)
-                touched.update(t)
+                _t, freed = _make_room(pw, today, min(after - budget, delta), keep, refit_file)
                 after -= freed
-                if after > budget + 1:
-                    n = int(round(after - budget))
+                # QX-H3: name every ride the room came from.
+                cut = sorted((x for x in pw.sessions
+                              if x.duration_min < lens.get(id(x), x.duration_min)),
+                             key=lambda x: x.day)
+                for x in cut:
+                    out["shortened"].append({
+                        "day": x.day.isoformat(), "from": lens[id(x)], "to": x.duration_min,
+                        "text": (f"{_own_day_label(x.day)}: your {words(x.session_type)} is now "
+                                 f"{_own_len(x.duration_min)} (was {_own_len(lens[id(x)])}) "
+                                 f"to keep the week's load.")})
+                # QX-M10: only what this change added, and only past the budget.
+                n = int(round(min(delta - freed, after - budget)))
+                if n > 1:
                     out["over_budget"][pw.start.isoformat()] = n
+                    wk = _own_day_label(pw.start)
                     warn("over_budget", pw.start,
-                         f"The week of {_own_day_label(pw.start)} is {n} TSS over its "
-                         f"planned load: there was no easy riding left to shorten.")
+                         (f"After shortening {', '.join(_own_day_label(x.day) for x in cut)}, "
+                          f"this change still puts the week of {wk} {n} TSS over its planned load.")
+                         if cut else
+                         (f"This change puts the week of {wk} {n} TSS over its planned load: "
+                          f"there was no easy riding left to shorten."))
             elif delta < 0 and after < budget:
-                t, _added = _give_back(pw, today, min(budget - after, -delta), keep, refit_file)
-                touched.update(t)
+                _give_back(pw, today, min(budget - after, -delta), keep, refit_file)
+                for x in sorted(pw.sessions, key=lambda x: x.day):
+                    was = lens.get(id(x), x.duration_min)
+                    if x.duration_min > was:
+                        back = not getattr(x, "shortened_from", 0)
+                        out["lengthened"].append({
+                            "day": x.day.isoformat(), "from": was, "to": x.duration_min,
+                            "text": (f"{_own_day_label(x.day)}: your {words(x.session_type)} is "
+                                     + (f"back to {_own_len(x.duration_min)}." if back else
+                                        f"{_own_len(x.duration_min)} again (was {_own_len(was)})."))})
 
     def run(action_days, change) -> "str | None":
         """One action: change() validates and applies (returning a refusal
@@ -14106,7 +14196,7 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             cur["load_from"] = None              # the rider typed it with the move
         f, reason = parse(cur, d=to)
         if reason is None and to != frm:
-            reason = check_day(to, f["eid"], moving_from=frm)
+            reason = check_day(to, f["eid"], moving_from=frm, replace=bool(mv.get("replace")))
         if reason:
             refuse(to, reason)
             continue
@@ -14122,8 +14212,7 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             reindex()
             reason2 = place(to, f, base, row(to), moved_from=frm.isoformat())
             if reason2:
-                put(frm, src)
-                touched.discard(frm.isoformat())
+                put(frm, src)                  # exactly as it was (QA L2)
                 return reason2
             reindex()
             fit_restored(frm)
@@ -14154,7 +14243,18 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             link = False
         else:
             item = item if isinstance(item, dict) else {}
+            keep_from = None
+            if item.get("edit") and "load" not in item:
+                # An edit that leaves the load alone keeps it, and where it
+                # came from (an imported ride's load is not typed: QX-H2).
+                d0 = _day(item.get("date"))
+                p0 = row(d0) if d0 is not None else None
+                if getattr(p0, "own", None) and p0.own.get("load_from") in ("typed", "icu"):
+                    item = {**item, "load": p0.tss_estimate}
+                    keep_from = p0.own.get("load_from")
             f, reason = parse(item)
+            if f is not None and keep_from:
+                f["load_from"] = keep_from
             base, link = None, bool(item.get("link"))
         if reason:
             refuse((item or carried or {}).get("date") or (carried or {}).get("day"), reason)
@@ -14164,7 +14264,9 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             refuse(d, "duplicate_day")
             continue
         seen.add(d)
-        reason = check_day(d, f["eid"], link=link)
+        replace = bool((item or {}).get("replace")) and carried is None
+        reason = check_day(d, f["eid"], link=link, edit=bool((item or {}).get("edit")),
+                           replace=replace)
         if reason is None and f["eid"] is not None:
             if any(getattr(s, "own", None) and s.own.get("icu_event_id") == f["eid"]
                    and s.day != d for pw in weeks for s in pw.sessions):
@@ -14173,16 +14275,21 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             refuse(d, reason)
             continue
         prior = row(d)
-        if base is None and getattr(prior, "own", None):
-            base = {k: v for k, v in prior.own.items() if k != "replaced"}   # an edit
+        prior_own = getattr(prior, "own", None)
+        replacing = bool(prior_own) and replace and not (
+            (item or {}).get("edit") or (f["eid"] is not None and f["eid"] == prior_own.get("icu_event_id"))
+            or (link and f["eid"] is not None and prior_own.get("icu_event_id") is None))
+        if base is None and prior_own and not replacing:
+            base = {k: v for k, v in prior_own.items() if k != "replaced"}   # an edit or a link
         reason = run([d], lambda d=d, f=f, base=base, prior=prior: place(
             d, f, base, prior, moved_from=(getattr(prior, "moved_from", "") or "")
-            if getattr(prior, "own", None) else ""))
+            if (getattr(prior, "own", None) and not replacing) else ""))
         if reason:
             refuse(d, reason)
             continue
         out["applied"].append({"action": "carry" if carried is not None else
-                               ("edit" if getattr(prior, "own", None) else "add"),
+                               ("replace" if replacing else
+                                "edit" if prior_own else "add"),
                                "date": d.isoformat()})
 
     # ── put back (O4) ──
@@ -14201,25 +14308,27 @@ def apply_own_sessions(plan_dict: dict, set_items=(), remove_days=(), *,
             continue
         s.own = {**s.own, "put_back_from": icu_d.isoformat(),
                  "put_back_at": clock.now().isoformat(timespec="seconds")}
-        touched.add(d.isoformat())
         out["applied"].append({"action": "put_back", "date": d.isoformat(),
                                "icu_day": icu_d.isoformat()})
 
-    # ── write back every day that changed, through the codec ──
-    if touched:
-        loc = {}
-        for w in plan_dict.get("weeks") or []:
-            if not isinstance(w, dict):
-                continue
-            for i, sj in enumerate(w.get("sessions") or []):
-                if isinstance(sj, dict) and sj.get("day"):
-                    loc.setdefault(str(sj["day"])[:10], (w, i))
-        by_iso = {s.day.isoformat(): s for pw in weeks for s in pw.sessions}
-        for iso in sorted(touched):
-            if iso in loc and iso in by_iso:
-                w, i = loc[iso]
-                w["sessions"][i] = session_to_dict(by_iso[iso])
-    out["touched_days"] = sorted(touched)
+    # ── all or nothing (QA L1/L2/L3): a refusal leaves the plan as it was ──
+    if atomic and out["refused"]:
+        for k in ("applied", "eased", "restored", "shortened", "lengthened",
+                  "ftp_test_moved", "warnings"):
+            out[k] = []
+        out["over_budget"] = {}
+        out["touched_days"] = []
+        return out
+    # ── write back every row that changed, at its own place, through the codec ──
+    changed = set()
+    for wi, pw in enumerate(weeks):
+        w, idx = _src[wi]
+        for j, x in enumerate(pw.sessions):
+            now = session_to_dict(x)
+            if now != _before[wi][j]:
+                w["sessions"][idx[j]] = now
+                changed.add(now["day"])
+    out["touched_days"] = sorted(changed)
     return out
 
 
@@ -14522,6 +14631,7 @@ def regenerate_from_today(
     seed_salt: int = 0,
     athlete: dict | None = None,
     recent_weekly_tss: float | None = None,
+    pinned_days=(),
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Regenerate plan from today, preserving past weeks.
 
@@ -15037,7 +15147,8 @@ def regenerate_from_today(
     for _tw in _owners_rg:
         _tw.finish()
 
-    _space_hard_days_across_plan(_future_weeks, library, seed_salt=seed_salt)
+    _space_hard_days_across_plan(_future_weeks, library, seed_salt=seed_salt,
+                                 pinned_days=pinned_days)
 
     # R4/R5 (2026-07-07) — R4a: slot/file coherence, ONCE, LAST (grill A2).
     # Future weeks only; same seed anchor as this path's fallback matches.
@@ -15164,6 +15275,7 @@ def recalculate_plan(
     current_eftp: float | None = None,
     athlete: dict | None = None,
     recent_weekly_tss: float | None = None,
+    pinned_days=(),
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Weekly rolling recalculation of the training plan.
 
@@ -15187,7 +15299,7 @@ def recalculate_plan(
             goal, current_plan_weeks, current_ctl,
             recent_activities=recent_activities,
             current_eftp=current_eftp, athlete=athlete,
-            recent_weekly_tss=recent_weekly_tss)
+            recent_weekly_tss=recent_weekly_tss, pinned_days=pinned_days)
 
     today = clock.today()
     today_str = today.isoformat()
@@ -15631,7 +15743,7 @@ def recalculate_plan(
     # the one entry point whose hand-assembled pass list included it. Runs
     # before the coherence pass so an eased session gets a matching file
     # instead of keeping the VO2 workout it no longer is.
-    _space_hard_days_across_plan(new_weeks, library)
+    _space_hard_days_across_plan(new_weeks, library, pinned_days=pinned_days)
 
     # AFTER the A8 clamp above, which shrinks slots in place and thereby
     # CREATES exactly the file>slot decouplings this pass repairs by rematch).
@@ -15669,6 +15781,7 @@ def extend_continuous_plan(
     athlete: dict | None = None,
     recent_weekly_tss: float | None = None,
     seed_salt: int = 0,
+    pinned_days=(),
 ) -> tuple[list, list[PlannedWeek], dict]:
     """Weekly rolling EXTEND for a continuous goal: drop elapsed, append.
 
@@ -15974,7 +16087,7 @@ def extend_continuous_plan(
     # the one entry point whose hand-assembled pass list included it. Runs
     # before the coherence pass so an eased session gets a matching file
     # instead of keeping the VO2 workout it no longer is.
-    _space_hard_days_across_plan(new_weeks, library)
+    _space_hard_days_across_plan(new_weeks, library, pinned_days=pinned_days)
 
     # Slot/file coherence, ONCE, LAST (R4a parity — after the clamp).
     _enforce_slot_file_coherence(
@@ -16042,6 +16155,7 @@ def refit_remaining_week(
     *,
     seed_salt: int = 0,
     athlete: dict | None = None,
+    pinned_days=(),
 ) -> tuple[list[PlannedWeek], dict]:
     """v2.0.7 — re-fit the REMAINING trainable days of the CURRENT week after a
     HARD session was missed, redistributing the missed stimulus within the
@@ -16469,7 +16583,10 @@ def refit_remaining_week(
     # instead of keeping the VO2 workout it no longer is.
     # Only this week: refit owns one week, and reaching into its
     # neighbours would edit sessions the athlete may already have ridden.
-    _space_hard_days_across_plan([week], library, seed_salt=seed_salt)
+    _space_hard_days_across_plan(
+        [week], library, seed_salt=seed_salt, pinned_days=pinned_days,
+        # QA M1: a day the refit froze is never eased here either.
+        keep_days={s.day for s in week.sessions if _refit_session_frozen(s, today)})
 
     # _refit_session_frozen day<today rule so a past (missed-but-unmarked)
     # session is never rematched into a different historical record.

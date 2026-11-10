@@ -1126,6 +1126,10 @@ def test_w4_qx_m10_only_the_load_this_ride_adds_is_blamed_and_a_race_is_not():
     r = apply(p, [ride(d(4), intensity="moderate", dur=60, name="Pre-race spin")])
     ob = r["over_budget"].get(d(0), 0)
     assert 0 < ob <= 65 - 44 + 1
+    # A week already over its budget: the ride is blamed for its own 21 only.
+    p = mkplan(week(0, rows, 60))
+    r = apply(p, [ride(d(4), intensity="moderate", dur=60, name="Pre-race spin")])
+    assert r["over_budget"].get(d(0)) == 65 - 44
 
 
 def test_w4_m1_the_rebuild_48h_pass_keeps_today_pins_and_a_kept_test():

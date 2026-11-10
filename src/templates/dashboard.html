@@ -8182,6 +8182,9 @@ async function applyReadinessTierDown() {
 async function applyWeekAutoAdjust() {
   const btn = document.getElementById('apply-week-tier-down-btn');
   const statusEl = document.getElementById('apply-week-tier-down-status');
+  // QX-L9: the button gets back its own label ("Apply rest day" or
+  // "Auto-adjust this week"), never the other one.
+  const label0 = btn ? btn.textContent : '';
   if (btn) {
     if (btn.disabled) return;
     btn.disabled = true;
@@ -8208,7 +8211,7 @@ async function applyWeekAutoAdjust() {
       const reason = (data.error || ('HTTP ' + res.status));
       if (statusEl) statusEl.innerHTML = `<span style="color:var(--orange);">Could not preview: ${esc(String(reason))}</span>`;
       try { showToast('Auto-adjust: ' + reason, 4000); } catch(_) {}
-      if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+      if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
       return;
     }
     const actions = Array.isArray(data.actions) ? data.actions : [];
@@ -8278,10 +8281,10 @@ async function applyWeekAutoAdjust() {
         </div>
       </div>`;
     openModal(modalHtml);
-    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+    if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
   } catch (e) {
     if (statusEl) statusEl.innerHTML = `<span style="color:var(--red);">Network error: ${esc(String(e && e.message || e))}</span>`;
-    if (btn) { btn.disabled = false; btn.textContent = '🩹 Auto-adjust this week'; }
+    if (btn) { btn.disabled = false; btn.textContent = label0 || '🩹 Auto-adjust this week'; }
   }
 }
 

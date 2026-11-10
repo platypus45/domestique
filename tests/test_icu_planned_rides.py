@@ -424,3 +424,19 @@ const lines = _ownLostNotice({own_lost: ['Your ride Far ride on Thu 3 Dec could 
 if (lines.length !== 1 || !/Far ride/.test(TOASTS[0])) throw new Error('not said');
 console.log('OK');
 """)
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not installed")
+def test_w4_qx_l9_apply_rest_day_keeps_its_label_after_a_refusal():
+    _run(_STUBS + _js("applyWeekAutoAdjust") + """
+const BTN = {disabled: false, textContent: '🛏 Apply rest day'};
+const ST = {textContent: '', innerHTML: ''};
+globalThis.window = {_readinessSeverity: 'rest'};
+globalThis.document = {getElementById: (id) => id === 'apply-week-tier-down-btn' ? BTN : (id === 'apply-week-tier-down-status' ? ST : null)};
+globalThis.fetch = async () => ({ok: false, status: 400, json: async () => ({error: 'Tue 20 Oct is your own ride: click it in the calendar to change or remove it.'})});
+(async () => {
+  await applyWeekAutoAdjust();
+  if (BTN.textContent !== '🛏 Apply rest day') throw new Error('label: ' + BTN.textContent);
+  console.log('OK');
+})().catch(e => { console.error(e); process.exit(1); });
+""")

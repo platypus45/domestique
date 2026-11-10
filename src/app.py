@@ -3397,7 +3397,8 @@ def api_rider_stats():
     body: dict = {}
     try:
         body["weight_kg"] = (
-            _prov(round(float(athlete["weight_kg"]), 1), "manual", None)
+            _prov(round(float(athlete["weight_kg"]), 1),
+                  "icu" if athlete.get("weight_source") == "icu" else "manual", None)
             if athlete.get("weight_kg") else dict(_PROV_EMPTY)
         )
         # LBM: default-valued profiles render empty-state (locked).
@@ -9201,8 +9202,8 @@ async def api_daily_log_post(request: Request):
     v4.6.6 IMPL-C: validates each Hooper field (sleep_quality, fatigue,
     stress, soreness, mood) is an int 1..7 and rejects with 400 otherwise.
     Returns the full row with computed `hooper_index` (sum of 4 Hooper
-    fields excluding mood, range 4..28). Per Hooper & Mackinnon 1995,
-    hooper_index ≥ 18 = significant accumulated fatigue (IMPL-B G6 gate).
+    fields excluding mood, range 4..28). What the sum means for training is
+    decided by readiness_composite.hooper_band (3.14.0).
     """
     body = await _get_json_body(request)
     dt = body.get("date", clock.today().isoformat())
@@ -17408,7 +17409,8 @@ def _sitko_advisory(best_20min_w: int) -> "dict | None":
         # a fabricated 70 kg is exactly what this gate exists to prevent.
         # Suppress on the default weight unconditionally (a genuine 70.0 kg
         # rider loses an advisory line, never a number).
-        if weight <= 0 or abs(weight - 70.0) < 1e-9:
+        if weight <= 0 or (abs(weight - 70.0) < 1e-9
+                           and not pm._athlete.get("weight_source")):
             return None
         wkg = best_20min_w / weight
         if wkg >= 4.7:

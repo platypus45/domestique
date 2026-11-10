@@ -33,7 +33,7 @@ The peer-reviewed evidence supporting TSS as a *quantifier of training that was 
 | Acute:chronic load mismatch | **G4 ACWR** (7-day load > 1.5 x 28-day -> trim next week 15 %) | [Gabbett 2016 (BJSM)](https://bjsm.bmj.com/content/50/5/273) |
 | Yesterday-was-hard / RPE 3-day drop | **G1 monotony** + **G7 RPE drop** | [Foster 1998 (PMID 9662690)](https://pubmed.ncbi.nlm.nih.gov/9662690/) |
 | Z5+ accumulation ceiling | **G2 48 h Z5+ <= 25 min** | [Hulin et al. 2014 (BJSM)](https://bjsm.bmj.com/content/48/8/708) |
-| Subjective fatigue TSS misses | **G5/G6 Hooper composite** + peripheral fatigue cap | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/), [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
+| Subjective fatigue TSS misses | **G5/G6 morning check-in** + peripheral fatigue cap | [Hooper et al. 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/), [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
 | 80/20 polarisation target | **POL 80/0/20** distribution baked into `WORKOUT_MIX_PREFERENCE` | [Stoggl & Sperlich 2014](https://pubmed.ncbi.nlm.nih.gov/24550842/) |
 | Autonomic fatigue TSS can't see | **DFA alpha1 from RR-intervals** (Malik 1996 artifact filter first) -> next-day intensity decision | [Rogers et al. 2021](https://pubmed.ncbi.nlm.nih.gov/33519504/), [Malik 1996](https://pubmed.ncbi.nlm.nih.gov/8598068/) |
 | Aerobic-threshold (LT1) anchor FTP can't give | **DFA HRVT1/HRVT2 detection** (alpha1 0.75/0.50) -> display-only LT1/LT2 HR+power + 3-zone model | [Rogers 2021 — LT1 (PMC7845545)](https://pmc.ncbi.nlm.nih.gov/articles/PMC7845545/) + [LT2 (PMID 33925974)](https://pubmed.ncbi.nlm.nih.gov/33925974/), [Schaffarczyk et al. 2022 (PMC9894976)](https://pmc.ncbi.nlm.nih.gov/articles/PMC9894976/) |
@@ -377,7 +377,7 @@ consolidated source list. Textbook / coaching references
 | Per-athlete CTL/ATL tau | model fitting (roadmap) | [Hellard et al. 2017](https://pubmed.ncbi.nlm.nih.gov/28651061/) |
 | ACWR (acute:chronic workload ratio) | 7d:28d sweet spot 0.8–1.3 | [Gabbett 2016](https://pubmed.ncbi.nlm.nih.gov/26758673/) |
 | 48h cumulative Z5+ guard | Z5+Z6+Z7 >= 25min | [Hulin et al. 2014](https://pubmed.ncbi.nlm.nih.gov/23962877/) |
-| Hooper composite | Sum(sleep, fatigue, stress, soreness) >= 18 | [Hooper & Mackinnon 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) |
+| Morning check-in band | rider's own usual after 14 check-ins in 28 days (z ≥ 1 ease off; z ≥ 2 with a Tired/Sore answer → Z2 cap); fixed 18 ease off / 20 cap until then; any worst-end answer or 22+ caps | [Hooper et al. 1995](https://pubmed.ncbi.nlm.nih.gov/7898325/) (the sum); Gallo 2016, Rabbani 2019 (own baseline) |
 | Subjective wellness > wearables | self-report responsiveness | [Saw et al. 2016](https://pubmed.ncbi.nlm.nih.gov/26423706/) |
 | DOMS protective downshift | peripheral fatigue 24–72h post-eccentric | [Cheung et al. 2003](https://pubmed.ncbi.nlm.nih.gov/12617692/) |
 | TSS ↔ performance evidence | correlational, mixed (see §0a) | [Sanders 2017](https://pubmed.ncbi.nlm.nih.gov/28095061/), [Wallace 2014](https://pubmed.ncbi.nlm.nih.gov/24662229/), [Vermeire 2021](https://pubmed.ncbi.nlm.nih.gov/31498226/) |
